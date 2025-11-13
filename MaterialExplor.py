@@ -6,18 +6,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 from scipy.stats import linregress
 import numpy as np
-import os
-
-def resource_path(relative_path):
-    return relative_path
 
 @st.cache_data
 def load_data():
     try:
+        # --- خواندن جدول تناوبی ---
         ptable_df = pd.read_csv("ptable2.csv")
-        ptable_df.rename(columns={"symbol": "element"}, inplace=True)
-        ptable_df['element'] = ptable_df['element'].str.strip()
+        ptable_df['symbol'] = ptable_df['symbol'].str.strip()
 
+        # --- خواندن داده‌های مکانیکی ---
         with open("vaspkit_output.json", "r", encoding="utf-8") as f:
             mech_data_nested = json.load(f)
 
@@ -52,34 +49,45 @@ def load_data():
             st.error("Mechanical data is empty.")
             return pd.DataFrame(), [], []
 
-        def extract_elements(formula):
-            return re.findall(r'[A-Z][a-z]?', formula)
+        # --- تجزیه فرمول با عدد ---
+        def parse_formula(formula):
+            pattern = r'([A-Z][a-z]?)(\d*)'
+            matches = re.findall(pattern, formula)
+            elements = []
+            for elem, count in matches:
+                count = int(count) if count else 1
+                elements.append((elem, count))
+            return elements
 
-        # --- محاسبه میانگین با تکرار عنصرها ---
-        feature_cols = [c for c in ptable_df.columns if c not in ['element']]
+        # --- محاسبه میانگین وزنی ---
+        feature_cols = [c for c in ptable_df.columns if c not in ['symbol']]
         materials_data = []
 
         for _, row in mech_df.iterrows():
             material = row['material']
-            elements = extract_elements(material)  # e.g., ['Cr', 'Cr', 'Pb', 'C']
-
-            rows = []
-            skip = False
-            for elem in elements:
-                elem_row = ptable_df[ptable_df['element'] == elem]
-                if elem_row.empty:
-                    skip = True
-                    break
-                # اضافه کردن سطر به تعداد تکرار
-                rows.append(elem_row.iloc[0][feature_cols])
-            if skip:
+            try:
+                parsed = parse_formula(material)
+            except:
                 continue
 
-            if rows:
-                sub_df = pd.DataFrame(rows)
-                averaged = sub_df.mean(numeric_only=True)
-                averaged['material'] = material
-                materials_data.append(averaged.to_dict())
+            weighted_values = {col: 0.0 for col in feature_cols}
+            total_atoms = 0
+
+            for elem, count in parsed:
+                elem_row = ptable_df[ptable_df['symbol'] == elem]
+                if elem_row.empty:
+                    break
+                row_values = elem_row.iloc[0]
+                for col in feature_cols:
+                    val = pd.to_numeric(row_values[col], errors='coerce')
+                    if not pd.isna(val):
+                        weighted_values[col] += val * count
+                total_atoms += count
+            else:
+                if total_atoms > 0:
+                    averaged = {col: weighted_values[col] / total_atoms for col in feature_cols}
+                    averaged['material'] = material
+                    materials_data.append(averaged)
 
         features_avg_df = pd.DataFrame(materials_data)
         if features_avg_df.empty:
@@ -96,6 +104,7 @@ def load_data():
         st.error(f"Error loading data: {e}")
         return pd.DataFrame(), [], []
 
+# --- اجرا ---
 df, atomic_features, mechanical_properties = load_data()
 if df.empty:
     st.stop()
@@ -103,63 +112,43 @@ if df.empty:
 st.set_page_config(page_title="Materials Explorer", layout="wide")
 st.title("Interactive Materials Property Explorer")
 
+# --- سایدبار ---
 with st.sidebar:
     st.header("Material Details")
-    selected_material = st.session_state.get("selected_material", None)
-    if selected_material:
-        st.success(f"**{selected_material}**")
-    else:
-        st.info("Click on a point to see details")
-
-col1, col2 = st.columns(2)
-with col1:
-    x_axis = st.selectbox("Atomic Feature (X)", atomic_features, index=0)
-with col2:
-    y_axis = st.selectbox("Mechanical Property (Y)", mechanical_properties, index=0)
-
-plot_df = df[['material', x_axis, y_axis]].copy()
-plot_df[x_axis] = pd.to_numeric(plot_df[x_axis], errors='coerce')
-plot_df[y_axis] = pd.to_numeric(plot_df[y_axis], errors='coerce')
-plot_df = plot_df.dropna()
-
-if plot_df.empty:
-    st.warning("No valid data to plot.")
-else:
-    fig = px.scatter(
-        plot_df, x=x_axis, y=y_axis,
-        hover_data=['material'],
-        custom_data=['material']
-    )
-    if plot_df[x_axis].nunique() > 1:
-        slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
-        line_x = [plot_df[x_axis].min(), plot_df[x_axis].max()]
-        line_y = [slope * x + intercept for x in line_x]
-        fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
-                                 line=dict(color='red', dash='dash'),
-                                 name=f'R² = {r**2:.3f}'))
-
-    try:
-        clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="scatter")
-        if clicked and clicked["selection"]["points"]:
-            point = clicked["selection"]["points"][0]
-            material_name = point["customdata"][0]
-            st.session_state.selected_material = material_name
-        else:
-            if "selected_material" in st.session_state:
-                del st.session_state.selected_material
-    except:
-        st.plotly_chart(fig, use_container_width=True)
-
-if st.session_state.get("selected_material"):
-    material = st.session_state.selected_material
-    data = df[df['material'] == material].iloc[0]
-    
-    with st.sidebar:
-        st.subheader(f"Details: {material}")
-        details = data.drop('material').to_dict()
-        for key, value in details.items():
+    if st.session_state.get("selected_material"):
+        material = st.session_state.selected_material
+        data = df[df['material'] == material].iloc[0]
+        st.success(f"**{material}**")
+        for key, value in data.drop('material').to_dict().items():
             if pd.isna(value):
                 value = "N/A"
             elif isinstance(value, (int, float, np.number)):
                 value = f"{value:.4f}"
             st.write(f"**{key}**: {value}")
+    else:
+        st.info("Click on a point to see details")
+
+# --- نمودار ---
+col1, col2 = st.columns(2)
+with col1:
+    x_axis = st.selectbox("Atomic Feature (X)", atomic_features, index=atomic_features.index('atomic_number') if 'atomic_number' in atomic_features else 0)
+with col2:
+    y_axis = st.selectbox("Mechanical Property (Y)", mechanical_properties, index=0)
+
+plot_df = df[['material', x_axis, y_axis]].dropna()
+if plot_df.empty:
+    st.warning("No valid data.")
+else:
+    fig = px.scatter(plot_df, x=x_axis, y=y_axis, hover_data=['material'], custom_data=['material'])
+    if plot_df[x_axis].nunique() > 1:
+        slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
+        line_x = [plot_df[x_axis].min(), plot_df[x_axis].max()]
+        line_y = [slope * x + intercept for x in line_x]
+        fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines', line=dict(color='red', dash='dash'), name=f'R² = {r**2:.3f}'))
+
+    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="scatter")
+    if clicked and clicked["selection"]["points"]:
+        material_name = clicked["selection"]["points"][0]["customdata"][0]
+        st.session_state.selected_material = material_name
+    elif "selected_material" in st.session_state:
+        del st.session_state.selected_material
