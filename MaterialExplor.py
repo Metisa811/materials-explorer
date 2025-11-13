@@ -88,13 +88,7 @@ if df.empty:
 st.set_page_config(page_title="Materials Explorer", layout="wide")
 st.title("Interactive Materials Property Explorer")
 
-with st.sidebar:
-    st.header("Material Details")
-    selected_material = st.session_state.get("selected_material", None)
-    if selected_material:
-        st.success(f"**{selected_material}**")
-    else:
-        st.info("Click on a point to see details")
+
 
 col1, col2 = st.columns(2)
 with col1:
@@ -157,3 +151,4 @@ with st.sidebar:
             st.write(f"**{key}**: {value}")
     else:
         st.info("Click on a point to see details")
+
