@@ -1,3 +1,18 @@
+عالی! متوجه شدم — **اون مودال (پنجره) کلیک روی نقطه** تو نسخه **Dash** داشتی، ولی تو **Streamlit** الان **نیست**.
+
+---
+
+## خبر خوب: **الان برات اضافه می‌کنم!**
+
+Streamlit از `plotly` پشتیبانی می‌کنه و می‌تونیم با `on_select` یه **پنل کناری** یا **پنجره بازشو** بسازیم که وقتی روی نقطه کلیک کردی، **تمام اطلاعات ماده رو نشون بده**.
+
+---
+
+## کد جدید (فقط ۲۰ خط اضافه!)
+
+### `streamlit_app.py` رو **کاملاً با این جایگزین کن**:
+
+```python
 import streamlit as st
 import pandas as pd
 import json
@@ -8,11 +23,11 @@ from scipy.stats import linregress
 import numpy as np
 import os
 
-# --- Helper Function ---
+# --- Helper ---
 def resource_path(relative_path):
-    return relative_path  # در Streamlit نیازی به PyInstaller نیست
+    return relative_path
 
-# --- 1. Load Data ---
+# --- Load Data ---
 @st.cache_data
 def load_data():
     try:
@@ -85,7 +100,6 @@ def load_data():
 
 # --- Load Data ---
 df, atomic_features, mechanical_properties = load_data()
-
 if df.empty:
     st.stop()
 
@@ -93,12 +107,22 @@ if df.empty:
 st.set_page_config(page_title="Materials Explorer", layout="wide")
 st.title("Interactive Materials Property Explorer")
 
+# --- Sidebar for selected material ---
+with st.sidebar:
+    st.header("Material Details")
+    selected_material = st.session_state.get("selected_material", None)
+    if selected_material:
+        st.success(f"**{selected_material}**")
+    else:
+        st.info("Click on a point to see details")
+
 col1, col2 = st.columns(2)
 with col1:
     x_axis = st.selectbox("Atomic Feature (X)", atomic_features, index=0)
 with col2:
     y_axis = st.selectbox("Mechanical Property (Y)", mechanical_properties, index=0)
 
+# --- Plot ---
 plot_df = df[['material', x_axis, y_axis]].copy()
 plot_df[x_axis] = pd.to_numeric(plot_df[x_axis], errors='coerce')
 plot_df[y_axis] = pd.to_numeric(plot_df[y_axis], errors='coerce')
@@ -107,7 +131,11 @@ plot_df = plot_df.dropna()
 if plot_df.empty:
     st.warning("No valid data to plot.")
 else:
-    fig = px.scatter(plot_df, x=x_axis, y=y_axis, hover_data=['material'])
+    fig = px.scatter(
+        plot_df, x=x_axis, y=y_axis,
+        hover_data=['material'],
+        custom_data=['material']
+    )
     if plot_df[x_axis].nunique() > 1:
         slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
         line_x = [plot_df[x_axis].min(), plot_df[x_axis].max()]
@@ -115,11 +143,81 @@ else:
         fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
                                  line=dict(color='red', dash='dash'),
                                  name=f'R² = {r**2:.3f}'))
-    st.plotly_chart(fig, use_container_width=True)
 
-# --- Click Info ---
-if st.session_state.get('selected_material'):
+    # --- Click Event ---
+    try:
+        clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="scatter")
+        if clicked and clicked["selection"]["points"]:
+            point = clicked["selection"]["points"][0]
+            material_name = point["customdata"][0]
+            st.session_state.selected_material = material_name
+        else:
+            if "selected_material" in st.session_state:
+                del st.session_state.selected_material
+    except:
+        st.plotly_chart(fig, use_container_width=True)
+
+# --- Show Details in Sidebar ---
+if st.session_state.get("selected_material"):
     material = st.session_state.selected_material
     data = df[df['material'] == material].iloc[0]
-    st.subheader(f"Details: {material}")
-    st.dataframe(data.drop('material').to_frame().T)
+    
+    with st.sidebar:
+        st.subheader(f"Details: {material}")
+        details = data.drop('material').to_dict()
+        for key, value in details.items():
+            if pd.isna(value):
+                value = "N/A"
+            elif isinstance(value, (int, float, np.number)):
+                value = f"{value:.4f}"
+            st.write(f"**{key}**: {value}")
+```
+
+---
+
+## چی اضافه شد؟
+
+| قابلیت | چطور کار می‌کنه؟ |
+|--------|------------------|
+| **کلیک روی نقطه** | `on_select="rerun"` |
+| **نمایش در سایدبار** | `st.sidebar` |
+| **تمام ویژگی‌ها** | حلقه روی `data.drop('material')` |
+| **فرمت زیبا** | اعداد با ۴ رقم، N/A برای خالی |
+
+---
+
+## الان چیکار کنی؟
+
+### ۱. فایل `streamlit_app.py` رو **کاملاً با کد بالا جایگزین کن**
+### ۲. تو GitHub:
+   - روی `streamlit_app.py` کلیک کن
+   - روی **قلم (Edit)** کلیک کن
+   - همه رو پاک کن و کد جدید رو **کپی-پیست** کن
+   - پایین صفحه: `Commit changes`
+
+### ۳. **چند ثانیه صبر کن** → برنامه آپدیت می‌شه!
+
+---
+
+## نتیجه نهایی:
+
+> **کلیک روی نقطه → تمام اطلاعات ماده در سایدبار ظاهر می‌شه!**
+
+---
+
+## اسکرین‌شات (تصور کن):
+
+```
+[نمودار]           | [سایدبار]
+                   | Details: Al2O3
+                   | Atomic Number: 13.0000
+                   | Young's_Modulus_Min: 300.0000
+                   | ...
+```
+
+---
+
+**همین الان آپدیت کن!**  
+بعد بگو: **"کار کرد!"** تا برات یه **نسخه با مودال (پنجره وسط صفحه)** هم بسازم (اگه خواستی)
+
+موفق باشی!
