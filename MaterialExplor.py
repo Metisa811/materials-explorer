@@ -90,9 +90,20 @@ st.title("Interactive Materials Property Explorer")
 
 with st.sidebar:
     st.header("Material Details")
-    selected_material = st.session_state.get("selected_material", None)
-    if selected_material:
-        st.success(f"**{selected_material}**")
+    
+    if st.session_state.get("selected_material"):
+        material = st.session_state.selected_material
+        st.success(f"**{material}**")  # فقط یک بار اسم ماده
+        
+        data = df[df['material'] == material].iloc[0]
+        details = data.drop('material').to_dict()
+        
+        for key, value in details.items():
+            if pd.isna(value):
+                value = "N/A"
+            elif isinstance(value, (int, float, np.number)):
+                value = f"{value:.4f}"
+            st.write(f"**{key}**: {value}")
     else:
         st.info("Click on a point to see details")
 
@@ -139,12 +150,21 @@ if st.session_state.get("selected_material"):
     material = st.session_state.selected_material
     data = df[df['material'] == material].iloc[0]
     
-    with st.sidebar:
-        st.subheader(f"Details: {material}")
+with st.sidebar:
+    st.header("Material Details")
+    
+    if st.session_state.get("selected_material"):
+        material = st.session_state.selected_material
+        st.success(f"**{material}**")  # فقط یک بار اسم ماده
+        
+        data = df[df['material'] == material].iloc[0]
         details = data.drop('material').to_dict()
+        
         for key, value in details.items():
             if pd.isna(value):
                 value = "N/A"
             elif isinstance(value, (int, float, np.number)):
                 value = f"{value:.4f}"
             st.write(f"**{key}**: {value}")
+    else:
+        st.info("Click on a point to see details")
