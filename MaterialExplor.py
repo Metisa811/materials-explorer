@@ -55,16 +55,32 @@ def load_data():
         def extract_elements(formula):
             return re.findall(r'[A-Z][a-z]?', formula)
 
+
+        # --- محاسبه میانگین با تکرار عنصرها ---
         feature_cols = [c for c in ptable_df.columns if c not in ['element']]
         materials_data = []
+        
         for _, row in mech_df.iterrows():
             material = row['material']
-            elements = extract_elements(material)
-            sub_df = ptable_df[ptable_df['element'].isin(elements)]
-            if len(sub_df) == 0 or len(sub_df) != len(elements): continue
-            averaged = sub_df[feature_cols].mean(numeric_only=True)
-            averaged['material'] = material
-            materials_data.append(averaged)
+            elements = extract_elements(material)  # ['Cr', 'Cr', 'Pb', 'C']
+            
+            rows = []
+            for elem in elements:
+                elem_row = ptable_df[ptable_df['element'] == elem]
+                if elem_row.empty:
+                    break
+                rows.append(elem_row.iloc[0][feature_cols])  # فقط ستون‌های عددی
+            else:
+                sub_df = pd.DataFrame(rows)
+                averaged = sub_df.mean(numeric_only=True)
+                averaged['material'] = material
+                materials_data.append(averaged)
+        
+        features_avg_df = pd.DataFrame(materials_data)
+        if features_avg_df.empty:
+            st.error("Atomic features are empty.")
+            return pd.DataFrame(), [], []
+
 
         features_avg_df = pd.DataFrame(materials_data)
         if features_avg_df.empty:
@@ -151,4 +167,5 @@ with st.sidebar:
             st.write(f"**{key}**: {value}")
     else:
         st.info("Click on a point to see details")
+
 
