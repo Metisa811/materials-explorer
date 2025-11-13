@@ -55,33 +55,26 @@ def load_data():
         def extract_elements(formula):
             return re.findall(r'[A-Z][a-z]?', formula)
 
-
         # --- محاسبه میانگین با تکرار عنصرها ---
         feature_cols = [c for c in ptable_df.columns if c not in ['element']]
         materials_data = []
-        
+       
         for _, row in mech_df.iterrows():
             material = row['material']
-            elements = extract_elements(material)  # ['Cr', 'Cr', 'Pb', 'C']
-            
+            elements = extract_elements(material)
+           
             rows = []
             for elem in elements:
                 elem_row = ptable_df[ptable_df['element'] == elem]
                 if elem_row.empty:
                     break
-                rows.append(elem_row.iloc[0][feature_cols])  # فقط ستون‌های عددی
+                rows.append(elem_row.iloc[0][feature_cols])
             else:
                 sub_df = pd.DataFrame(rows)
                 averaged = sub_df.mean(numeric_only=True)
                 averaged['material'] = material
                 materials_data.append(averaged)
-        
-        features_avg_df = pd.DataFrame(materials_data)
-        if features_avg_df.empty:
-            st.error("Atomic features are empty.")
-            return pd.DataFrame(), [], []
-
-
+       
         features_avg_df = pd.DataFrame(materials_data)
         if features_avg_df.empty:
             st.error("Atomic features are empty.")
@@ -104,7 +97,13 @@ if df.empty:
 st.set_page_config(page_title="Materials Explorer", layout="wide")
 st.title("Interactive Materials Property Explorer")
 
-
+with st.sidebar:
+    st.header("Material Details")
+    if st.session_state.get("selected_material"):
+        material = st.session_state.selected_material
+        st.success(f"**{material}**")
+    else:
+        st.info("Click on a point to see details")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -148,24 +147,12 @@ else:
 if st.session_state.get("selected_material"):
     material = st.session_state.selected_material
     data = df[df['material'] == material].iloc[0]
+    details = data.drop('material').to_dict()
     
-with st.sidebar:
-    st.header("Material Details")
-    
-    if st.session_state.get("selected_material"):
-        material = st.session_state.selected_material
-        st.success(f"**{material}**")  # فقط یک بار اسم ماده
-        
-        data = df[df['material'] == material].iloc[0]
-        details = data.drop('material').to_dict()
-        
+    with st.sidebar:
         for key, value in details.items():
             if pd.isna(value):
                 value = "N/A"
             elif isinstance(value, (int, float, np.number)):
                 value = f"{value:.4f}"
             st.write(f"**{key}**: {value}")
-    else:
-        st.info("Click on a point to see details")
-
-
