@@ -25,7 +25,7 @@ def load_data():
                            "Universal_Elastic_Anisotropy", "Chung_Buessem_Anisotropy",
                            "Isotropic_Poissons_Ratio", "Wave_Velocity_Longitudinal",
                            "Wave_Velocity_Transverse", "Wave_Velocity_Average", "Debye_Temperature_K",
-                           "Brittleness_Indicator", "Mechanical_Stability"]
+                           "Brittleness_Indicator", "Mechanical_Stability","Bulk_Modulus_B_(GPa)"]
 
         for material, data in mech_data_nested.items():
             if not data: continue
@@ -152,3 +152,4 @@ else:
         st.session_state.selected_material = material_name
     elif "selected_material" in st.session_state:
         del st.session_state.selected_material
+
