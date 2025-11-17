@@ -39,10 +39,12 @@ def load_data():
                         if stat in vals:
                             row[key] = vals[stat]
 
-        # --- Additional Properties ---
+        # --- Additional Properties (بدون تکرار) ---
         if "Additional_Properties" in data:
             for k, v in data["Additional_Properties"].items():
-                row[k] = v
+                # فقط اگر قبلاً اضافه نشده باشه
+                if k not in row:
+                    row[k] = v
 
         records.append(row)
 
@@ -84,8 +86,12 @@ def load_data():
     atomic_df = pd.DataFrame(atomic_data)
     df = pd.merge(atomic_df, mech_df, on='material', how='inner')
 
+    # --- لیست نهایی بدون تکرار ---
     atomic_features = sorted([c for c in atomic_df.columns if c != 'material'])
-    mechanical_properties = sorted([c for c in mech_df.columns if c != 'material'])
+    
+    # حذف تکراری‌ها و مرتب‌سازی
+    mech_cols = list(dict.fromkeys([c for c in mech_df.columns if c != 'material']))  # حذف تکرار
+    mechanical_properties = sorted([c for c in mech_cols if c not in atomic_features])
 
     return df, atomic_features, mechanical_properties
 
@@ -109,22 +115,24 @@ with st.sidebar:
 
         details = data.drop('material')
 
-        # Group 1: Atomic Properties
-        atomic_keys = [k for k in atomic_features if k in details.index]
-        if atomic_keys:
-            st.subheader("Atomic Properties")
-            for k in atomic_keys:
-                v = details[k]
-                v = "N/A" if pd.isna(v) else f"{v:.4f}"
-                st.write(f"**{k}**: {v}")
+        # گروه‌بندی و نمایش ایمن
+        st.subheader("Atomic Properties")
+        for k in sorted([c for c in atomic_features if c in details.index]):
+            v = details[k]
+            if pd.isna(v):
+                st.write(f"**{k}**: N/A")
+            else:
+                st.write(f"**{k}**: {float(v):.4f}")
 
-        # Group 2: Elastic Properties
-        elastic_keys = [k for k in mechanical_properties if k in details.index]
-        if elastic_keys:
-            st.subheader("Elastic Properties")
-            for k in sorted(elastic_keys):
-                v = details[k]
-                v = "N/A" if pd.isna(v) else f"{v:.4f}"
+        st.subheader("Elastic & Mechanical Properties")
+        elastic_keys = sorted([c for c in mechanical_properties if c in details.index])
+        for k in elastic_keys:
+            v = details[k]
+            if pd.isna(v):
+                st.write(f"**{k}**: N/A")
+            elif isinstance(v, (int, float, np.number)):
+                st.write(f"**{k}**: {float(v):.4f}")
+            else:
                 st.write(f"**{k}**: {v}")
 
         if st.button("Clear Selection"):
@@ -142,10 +150,14 @@ with col1:
         index=atomic_features.index('atomic_number') if 'atomic_number' in atomic_features else 0
     )
 with col2:
+    # فقط یک بار Poisson's Ratio v Min
+    y_options = [c for c in mechanical_properties if "Poissons_Ratio_v_Min" in c or c != "Poissons_Ratio_v_Min"]
+    y_default = next((c for c in y_options if "Poissons_Ratio_v_Min" in c), y_options[0] if y_options else None)
+    
     y_axis = st.selectbox(
-        "Y-axis (Elastic Property) — includes negative Poisson & Cij",
-        options=mechanical_properties,
-        index=mechanical_properties.index('Poissons_Ratio_v_Min') if 'Poissons_Ratio_v_Min' in mechanical_properties else 0
+        "Y-axis (Elastic Property)",
+        options=y_options,
+        index=y_options.index(y_default) if y_default in y_options else 0
     )
 
 plot_df = df[['material', x_axis, y_axis]].dropna()
@@ -181,4 +193,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.caption("Professional Materials Explorer — Full English • Negative Poisson's Ratio Supported • C11–C66 Included")
+st.caption("Professional Materials Explorer — Fixed: No duplicates • Safe formatting • Negative Poisson fully supported")
