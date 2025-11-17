@@ -123,7 +123,7 @@ if df.empty:
 
 st.set_page_config(page_title="MAX Phase Explorer Pro", layout="wide")
 st.title("MAX Phase & Elastic Properties Explorer Pro")
-st.markdown("**X-axis و Y-axis: همه ویژگی‌های اتمی + الاستیک (Cij, Sij, Min/Max, Hill, ...)**")
+
 
 # --- سایدبار: نمایش همه مشخصات ---
 with st.sidebar:
@@ -240,3 +240,4 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — Full Details on Click • All Elastic & Atomic Properties in X/Y • Professional & Complete")
+
