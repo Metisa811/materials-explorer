@@ -9,201 +9,176 @@ import numpy as np
 
 @st.cache_data
 def load_data():
-    try:
-        ptable_df = pd.read_csv("ptable2.csv")
-        ptable_df['symbol'] = ptable_df['symbol'].str.strip()
+    df_atomic = pd.read_csv("ptable2.csv")
+    df_atomic['symbol'] = df_atomic['symbol'].str.strip()
 
-        with open("vaspkit_output.json", "r", encoding="utf-8") as f:
-            raw_data = json.load(f)
+    with open("vaspkit_output.json", "r", encoding="utf-8") as f:
+        raw = json.load(f)
 
-        # --- استخراج همه خواص مکانیکی + Cij ---
-        records = []
-        cij_keys = [f"C{i}{j}" for i in range(1,7) for j in range(i,7)]  # C11, C12, ..., C44, C66
+    records = []
+    cij_keys = [f"C{i}{j}" for i in range(1,7) for j in range(i,7)]
 
-        for material, data in raw_data.items():
-            if not data:
-                continue
+    for material, data in raw.items():
+        if not data:
+            continue
 
-            row = {"material": material}
+        row = {"material": material}
 
-            # --- خواص آنیزوتروپیک (Min, Max, Anisotropy) ---
-            if "Anisotropic_Mechanical_Properties" in data:
-                amp = data["Anisotropic_Mechanical_Properties"]
-                for key, val in amp.items():
-                    clean_key = key.replace("|__", "").strip()
-                    if isinstance(val, dict):
-                        for stat in ["Min", "Max", "Anisotropy"]:
-                            if stat in val:
-                                row[f"{clean_key}_{stat}"] = val[stat]
-                    else:
-                        row[clean_key] = val
+        # --- Cij Tensor ---
+        if "Elastic_Tensor_Voigt" in data:
+            for k, v in data["Elastic_Tensor_Voigt"].items():
+                row[k] = v
 
-            # --- خواص اضافی ---
-            if "Additional_Properties" in data:
-                for k, v in data["Additional_Properties"].items():
-                    row[k] = v
+        # --- Anisotropic Properties (Min/Max/Anisotropy) ---
+        if "Anisotropic_Mechanical_Properties" in data:
+            for prop, vals in data["Anisotropic_Mechanical_Properties"].items():
+                clean_prop = prop.replace("’", "").replace("'", "").replace(" ", "_")
+                if isinstance(vals, dict):
+                    for stat in ["Min", "Max", "Anisotropy"]:
+                        key = f"{clean_prop}_{stat}"
+                        if stat in vals:
+                            row[key] = vals[stat]
 
-            # --- ماتریس الاستیک Cij (اگر وجود داشته باشه) ---
-            if "Elastic_Tensor_Voigt" in data:
-                tensor = data["Elastic_Tensor_Voigt"]
-                for key in cij_keys:
-                    if key in tensor:
-                        row[key] = tensor[key]
+        # --- Additional Properties ---
+        if "Additional_Properties" in data:
+            for k, v in data["Additional_Properties"].items():
+                row[k] = v
 
-            records.append(row)
+        records.append(row)
 
-        mech_df = pd.DataFrame(records)
-        if mech_df.empty:
-            st.error("هیچ داده مکانیکی پیدا نشد!")
-            return pd.DataFrame(), [], []
+    mech_df = pd.DataFrame(records)
 
-        # --- تجزیه فرمول با عدد (Cr2PbC → Cr:2, Pb:1, C:1) ---
-        def parse_formula(formula):
-            matches = re.findall(r'([A-Z][a-z]?)(\d*)', formula)
-            return [(elem, int(count) if count else 1) for elem, count in matches]
+    # --- Weighted Atomic Average ---
+    def parse_formula(f):
+        matches = re.findall(r'([A-Z][a-z]?)(\d*)', f)
+        return [(e, int(c) if c else 1) for e, c in matches]
 
-        # --- میانگین وزنی ویژگی‌های اتمی ---
-        feature_cols = [c for c in ptable_df.columns if c not in ['symbol']]
-        atomic_avg_data = []
+    feature_cols = [c for c in df_atomic.columns if c != 'symbol']
+    atomic_data = []
 
-        for _, row in mech_df.iterrows():
-            material = row['material']
-            try:
-                elements = parse_formula(material)
-            except:
-                continue
+    for _, row in mech_df.iterrows():
+        material = row['material']
+        try:
+            elements = parse_formula(material)
+        except:
+            continue
 
-            weighted = {col: 0.0 for col in feature_cols}
-            total_atoms = 0
+        weighted = {col: 0.0 for col in feature_cols}
+        total = 0
+        for elem, count in elements:
+            erow = df_atomic[df_atomic['symbol'] == elem]
+            if erow.empty:
+                break
+            vals = erow.iloc[0]
+            for col in feature_cols:
+                val = pd.to_numeric(vals[col], errors='coerce')
+                if not pd.isna(val):
+                    weighted[col] += val * count
+            total += count
+        else:
+            if total > 0:
+                avg_row = {col: weighted[col] / total for col in feature_cols}
+                avg_row['material'] = material
+                atomic_data.append(avg_row)
 
-            for elem, count in elements:
-                elem_row = ptable_df[ptable_df['symbol'] == elem]
-                if elem_row.empty:
-                    break
-                vals = elem_row.iloc[0]
-                for col in feature_cols:
-                    val = pd.to_numeric(vals[col], errors='coerce')
-                    if not pd.isna(val):
-                        weighted[col] += val * count
-                total_atoms += count
-            else:
-                if total_atoms > 0:
-                    avg_row = {col: weighted[col] / total_atoms for col in feature_cols}
-                    avg_row['material'] = material
-                    atomic_avg_data.append(avg_row)
+    atomic_df = pd.DataFrame(atomic_data)
+    df = pd.merge(atomic_df, mech_df, on='material', how='inner')
 
-        atomic_df = pd.DataFrame(atomic_avg_data)
-        if atomic_df.empty:
-            st.error("هیچ ویژگی اتمی محاسبه نشد!")
-            return pd.DataFrame(), [], []
+    atomic_features = sorted([c for c in atomic_df.columns if c != 'material'])
+    mechanical_properties = sorted([c for c in mech_df.columns if c != 'material'])
 
-        # --- ادغام ---
-        df = pd.merge(atomic_df, mech_df, on='material', how='inner')
+    return df, atomic_features, mechanical_properties
 
-        # --- لیست ویژگی‌های اتمی (X) ---
-        atomic_features = sorted([c for c in atomic_df.columns if c != 'material'])
-
-        # --- لیست همه خواص مکانیکی (Y) — شامل Cij و Bulk و Poisson منفی ---
-        mech_cols = [c for c in mech_df.columns if c not in ['material']]
-        mechanical_properties = sorted(mech_cols)
-
-        return df, atomic_features, mechanical_properties
-
-    except Exception as e:
-        st.error(f"خطا در بارگذاری داده: {e}")
-        return pd.DataFrame(), [], []
-
-# === اجرای برنامه ===
+# === Main App ===
 df, atomic_features, mechanical_properties = load_data()
 if df.empty:
+    st.error("No data loaded!")
     st.stop()
 
 st.set_page_config(page_title="Materials Elastic Explorer", layout="wide")
 st.title("Interactive Materials Elastic & Atomic Property Explorer")
-st.markdown("**کلیک روی نقطه → نمایش تمام خواص شامل Cij و Poisson منفی**")
+st.markdown("**Click on a point → Full details including negative Poisson's ratio and Cij tensor**")
 
-# --- سایدبار ---
+# --- Sidebar ---
 with st.sidebar:
-    st.header("جزئیات ماده")
+    st.header("Material Details")
     if st.session_state.get("selected_material"):
         mat = st.session_state.selected_material
         data = df[df['material'] == mat].iloc[0]
         st.success(f"**{mat}**")
 
-        # مرتب‌سازی: اول خواص اتمی، بعد مکانیکی، بعد Cij
         details = data.drop('material')
+
+        # Group 1: Atomic Properties
         atomic_keys = [k for k in atomic_features if k in details.index]
-        mech_keys = [k for k in mechanical_properties if k in details.index]
+        if atomic_keys:
+            st.subheader("Atomic Properties")
+            for k in atomic_keys:
+                v = details[k]
+                v = "N/A" if pd.isna(v) else f"{v:.4f}"
+                st.write(f"**{k}**: {v}")
 
-        st.subheader("ویژگی‌های اتمی")
-        for k in atomic_keys:
-            v = details[k]
-            if pd.isna(v): v = "N/A"
-            elif isinstance(v, (int, float)): v = f"{v:.4f}"
-            st.write(f"**{k}**: {v}")
+        # Group 2: Elastic Properties
+        elastic_keys = [k for k in mechanical_properties if k in details.index]
+        if elastic_keys:
+            st.subheader("Elastic Properties")
+            for k in sorted(elastic_keys):
+                v = details[k]
+                v = "N/A" if pd.isna(v) else f"{v:.4f}"
+                st.write(f"**{k}**: {v}")
 
-        st.subheader("خواص الاستیک")
-        for k in mech_keys:
-            v = details[k]
-            if pd.isna(v): v = "N/A"
-            elif isinstance(v, (int, float)): v = f"{v:.4f}"
-            st.write(f"**{k}**: {v}")
-
-        if st.button("پاک کردن انتخاب"):
-            if "selected_material" in st.session_state:
-                del st.session_state.selected_material
+        if st.button("Clear Selection"):
+            st.session_state.pop("selected_material", None)
             st.rerun()
     else:
-        st.info("روی یک نقطه کلیک کنید")
+        st.info("Click on a point to view details")
 
-# --- انتخاب محورها ---
+# --- Plot ---
 col1, col2 = st.columns(2)
 with col1:
     x_axis = st.selectbox(
-        "ویژگی اتمی (X)",
+        "X-axis (Atomic Feature)",
         options=atomic_features,
         index=atomic_features.index('atomic_number') if 'atomic_number' in atomic_features else 0
     )
 with col2:
     y_axis = st.selectbox(
-        "خواص الاستیک (Y) — شامل Cij و Poisson منفی",
+        "Y-axis (Elastic Property) — includes negative Poisson & Cij",
         options=mechanical_properties,
-        index=0
+        index=mechanical_properties.index('Poissons_Ratio_v_Min') if 'Poissons_Ratio_v_Min' in mechanical_properties else 0
     )
 
-# --- نمودار ---
 plot_df = df[['material', x_axis, y_axis]].dropna()
 
 if plot_df.empty:
-    st.warning("داده کافی برای رسم وجود ندارد.")
+    st.warning("No data available for selected axes.")
 else:
     fig = px.scatter(
         plot_df, x=x_axis, y=y_axis,
-        hover_data=['material'],
-        custom_data=['material'],
-        color_discrete_sequence=['#00CC96']
+        hover_data=['material'], custom_data=['material'],
+        color_discrete_sequence=['#00cc96']
     )
 
-    # خط رگرسیون
-    if len(plot_df) > 2 and plot_df[x_axis].nunique() > 1:
-        slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
-        line_x = np.array([plot_df[x_axis].min(), plot_df[x_axis].max()])
-        line_y = slope * line_x + intercept
-        fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
-                                 line=dict(color='red', dash='dash'),
-                                 name=f'R² = {r**2:.3f}'))
+    if len(plot_df) > 3:
+        try:
+            slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
+            x_line = np.array([plot_df[x_axis].min(), plot_df[x_axis].max()])
+            y_line = slope * x_line + intercept
+            fig.add_trace(go.Scatter(x=x_line, y=y_line, mode='lines',
+                                   line=dict(color='red', dash='dash'),
+                                   name=f'R² = {r**2:.3f}'))
+        except:
+            pass
 
-    # کلیک روی نقطه
-    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="main_plot")
+    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="plot")
 
     if clicked and clicked["selection"]["points"]:
-        material = clicked["selection"]["points"][0]["customdata"][0]
-        st.session_state.selected_material = material
+        mat_name = clicked["selection"]["points"][0]["customdata"][0]
+        st.session_state.selected_material = mat_name
     elif "selected_material" in st.session_state:
-        # اگر کلیک روی فضای خالی بود
-        del st.session_state.selected_material
+        st.session_state.pop("selected_material", None)
         st.rerun()
 
-# --- فوتر ---
+# Footer
 st.markdown("---")
-st.caption("نسخه حرفه‌ای — Poisson منفی، Cij، Bulk Modulus، میانگین وزنی دقیق")
+st.caption("Professional Materials Explorer — Full English • Negative Poisson's Ratio Supported • C11–C66 Included")
