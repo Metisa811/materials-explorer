@@ -9,14 +9,15 @@ import numpy as np
 
 @st.cache_data
 def load_data():
+    # --- جدول تناوبی ---
     df_atomic = pd.read_csv("ptable2.csv")
     df_atomic['symbol'] = df_atomic['symbol'].str.strip()
 
+    # --- داده‌های مکانیکی (ساختار جدید) ---
     with open("vaspkit_output.json", "r", encoding="utf-8") as f:
         raw = json.load(f)
 
     records = []
-    cij_keys = [f"C{i}{j}" for i in range(1,7) for j in range(i,7)]
 
     for material, data in raw.items():
         if not data:
@@ -24,39 +25,56 @@ def load_data():
 
         row = {"material": material}
 
-        # --- Cij Tensor ---
+        # --- ویژگی‌های اتمی ---
+        # (بعداً با میانگین وزنی اضافه می‌شه)
+
+        # --- Cij و Sij ---
         if "Elastic_Tensor_Voigt" in data:
             for k, v in data["Elastic_Tensor_Voigt"].items():
-                row[k] = v
+                row[k] = float(v) if v is not None else None
+        if "Compliance_Tensor" in data:
+            for k, v in data["Compliance_Tensor"].items():
+                row[f"Compliance_{k}"] = float(v) if v is not None else None
 
-        # --- Anisotropic Properties (Min/Max/Anisotropy) ---
+        # --- آنیزوتروپیک (Min/Max/Anisotropy) ---
         if "Anisotropic_Mechanical_Properties" in data:
             for prop, vals in data["Anisotropic_Mechanical_Properties"].items():
-                clean_prop = prop.replace("’", "").replace("'", "").replace(" ", "_")
+                clean = prop.replace("’", "").replace("'", "").replace(" ", "_")
                 if isinstance(vals, dict):
                     for stat in ["Min", "Max", "Anisotropy"]:
-                        key = f"{clean_prop}_{stat}"
                         if stat in vals:
-                            row[key] = vals[stat]
+                            row[f"{clean}_{stat}"] = float(vals[stat])
 
-        # --- Additional Properties (بدون تکرار) ---
+        # --- میانگین (Voigt/Reuss/Hill) ---
+        if "Average_Mechanical_Properties" in data:
+            for prop, vals in data["Average_Mechanical_Properties"].items():
+                clean = prop.replace("’", "").replace("'", "").replace(" ", "_")
+                if isinstance(vals, dict):
+                    for method in ["Voigt", "Reuss", "Hill"]:
+                        if method in vals:
+                            row[f"{clean}_{method}"] = float(vals[method])
+
+        # --- خواص اضافی ---
         if "Additional_Properties" in data:
             for k, v in data["Additional_Properties"].items():
-                # فقط اگر قبلاً اضافه نشده باشه
-                if k not in row:
-                    row[k] = v
+                if k == "Mechanical_Stability":
+                    row["Mechanical_Stability"] = v
+                elif k == "Brittleness_Indicator":
+                    row["Brittleness"] = v
+                else:
+                    row[k] = float(v) if isinstance(v, (int, float, str)) and str(v).replace(".", "").replace("-", "").isdigit() else v
 
         records.append(row)
 
     mech_df = pd.DataFrame(records)
 
-    # --- Weighted Atomic Average ---
+    # --- میانگین وزنی اتمی ---
     def parse_formula(f):
         matches = re.findall(r'([A-Z][a-z]?)(\d*)', f)
         return [(e, int(c) if c else 1) for e, c in matches]
 
     feature_cols = [c for c in df_atomic.columns if c != 'symbol']
-    atomic_data = []
+    atomic_rows = []
 
     for _, row in mech_df.iterrows():
         material = row['material']
@@ -69,8 +87,7 @@ def load_data():
         total = 0
         for elem, count in elements:
             erow = df_atomic[df_atomic['symbol'] == elem]
-            if erow.empty:
-                break
+            if erow.empty: break
             vals = erow.iloc[0]
             for col in feature_cols:
                 val = pd.to_numeric(vals[col], errors='coerce')
@@ -79,118 +96,126 @@ def load_data():
             total += count
         else:
             if total > 0:
-                avg_row = {col: weighted[col] / total for col in feature_cols}
-                avg_row['material'] = material
-                atomic_data.append(avg_row)
+                avg = {col: weighted[col] / total for col in feature_cols}
+                avg['material'] = material
+                atomic_rows.append(avg)
 
-    atomic_df = pd.DataFrame(atomic_data)
+    atomic_df = pd.DataFrame(atomic_rows)
     df = pd.merge(atomic_df, mech_df, on='material', how='inner')
 
-    # --- لیست نهایی بدون تکرار ---
     atomic_features = sorted([c for c in atomic_df.columns if c != 'material'])
-    
-    # حذف تکراری‌ها و مرتب‌سازی
-    mech_cols = list(dict.fromkeys([c for c in mech_df.columns if c != 'material']))  # حذف تکرار
-    mechanical_properties = sorted([c for c in mech_cols if c not in atomic_features])
+    mechanical_properties = sorted([c for c in mech_df.columns if c != 'material' and c not in atomic_features])
 
     return df, atomic_features, mechanical_properties
 
-# === Main App ===
+# === اجرا ===
 df, atomic_features, mechanical_properties = load_data()
 if df.empty:
     st.error("No data loaded!")
     st.stop()
 
-st.set_page_config(page_title="Materials Elastic Explorer", layout="wide")
-st.title("Interactive Materials Elastic & Atomic Property Explorer")
-st.markdown("**Click on a point → Full details including negative Poisson's ratio and Cij tensor**")
+st.set_page_config(page_title="MAX Phase Explorer", layout="wide")
+st.title("Interactive MAX Phase & Elastic Properties Explorer")
 
-# --- Sidebar ---
+# --- سایدبار ---
 with st.sidebar:
     st.header("Material Details")
+
     if st.session_state.get("selected_material"):
         mat = st.session_state.selected_material
         data = df[df['material'] == mat].iloc[0]
-        st.success(f"**{mat}**")
+        stability = data.get("Mechanical_Stability", "Unknown")
+        brittleness = data.get("Brittleness", "Unknown")
+
+        # نمایش وضعیت پایداری با رنگ
+        if stability == "Stable":
+            st.success("Mechanically Stable")
+        else:
+            st.error("Mechanically Unstable")
+
+        if brittleness == "Brittle":
+            st.warning("Brittle")
+        elif brittleness == "Ductile":
+            st.info("Ductile")
+
+        st.markdown(f"### **{mat}**")
 
         details = data.drop('material')
 
-        # گروه‌بندی و نمایش ایمن
+        # گروه‌بندی زیبا
         st.subheader("Atomic Properties")
-        for k in sorted([c for c in atomic_features if c in details.index]):
-            v = details[k]
-            if pd.isna(v):
-                st.write(f"**{k}**: N/A")
-            else:
-                st.write(f"**{k}**: {float(v):.4f}")
+        for k in sorted(atomic_features):
+            if k in details:
+                v = details[k]
+                st.write(f"**{k}**: {float(v):.4f}" if pd.notna(v) else f"**{k}**: N/A")
 
-        st.subheader("Elastic & Mechanical Properties")
-        elastic_keys = sorted([c for c in mechanical_properties if c in details.index])
-        for k in elastic_keys:
-            v = details[k]
-            if pd.isna(v):
-                st.write(f"**{k}**: N/A")
-            elif isinstance(v, (int, float, np.number)):
-                st.write(f"**{k}**: {float(v):.4f}")
-            else:
-                st.write(f"**{k}**: {v}")
+        st.subheader("Elastic Constants (Cij)")
+        cij_keys = [k for k in details.index if k.startswith("C")]
+        for k in sorted(cij_keys):
+            if pd.notna(details[k]):
+                st.write(f"**{k}**: {float(details[k]):.3f} GPa")
+
+        st.subheader("Compliance Tensor (Sij)")
+        sij_keys = [k for k in details.index if k.startswith("Compliance_S")]
+        for k in sorted(sij_keys):
+            if pd.notna(details[k]):
+                st.write(f"**{k.replace('Compliance_', '')}**: {float(details[k]):.6f} GPa⁻¹")
+
+        st.subheader("Anisotropic Properties")
+        aniso_keys = [k for k in details.index if "_Min" in k or "_Max" in k or "_Anisotropy" in k]
+        for k in sorted(aniso_keys):
+            if pd.notna(details[k]):
+                st.write(f"**{k}**: {float(details[k]):.4f}")
+
+        st.subheader("Average Properties (Hill)")
+        avg_keys = [k for k in details.index if "_Hill" in k]
+        for k in sorted(avg_keys):
+            if pd.notna(details[k]):
+                st.write(f"**{k.replace('_Hill', '')} (Hill)**: {float(details[k]):.4f}")
 
         if st.button("Clear Selection"):
-            st.session_state.pop("selected_material", None)
+            st.session_state.selected_material = None
             st.rerun()
-    else:
-        st.info("Click on a point to view details")
 
-# --- Plot ---
+    else:
+        st.info("Click on a point to view full details")
+
+# --- نمودار ---
 col1, col2 = st.columns(2)
 with col1:
-    x_axis = st.selectbox(
-        "X-axis (Atomic Feature)",
-        options=atomic_features,
-        index=atomic_features.index('atomic_number') if 'atomic_number' in atomic_features else 0
-    )
+    x_axis = st.selectbox("X-axis (Atomic)", atomic_features,
+                          index=atomic_features.index('atomic_number') if 'atomic_number' in atomic_features else 0)
 with col2:
-    # فقط یک بار Poisson's Ratio v Min
-    y_options = [c for c in mechanical_properties if "Poissons_Ratio_v_Min" in c or c != "Poissons_Ratio_v_Min"]
-    y_default = next((c for c in y_options if "Poissons_Ratio_v_Min" in c), y_options[0] if y_options else None)
-    
-    y_axis = st.selectbox(
-        "Y-axis (Elastic Property)",
-        options=y_options,
-        index=y_options.index(y_default) if y_default in y_options else 0
-    )
+    y_axis = st.selectbox("Y-axis (Elastic Property)", mechanical_properties, index=0)
 
 plot_df = df[['material', x_axis, y_axis]].dropna()
 
 if plot_df.empty:
-    st.warning("No data available for selected axes.")
+    st.warning("No data for selected axes.")
 else:
-    fig = px.scatter(
-        plot_df, x=x_axis, y=y_axis,
-        hover_data=['material'], custom_data=['material'],
-        color_discrete_sequence=['#00cc96']
-    )
+    fig = px.scatter(plot_df, x=x_axis, y=y_axis,
+                     hover_data=['material'], custom_data=['material'],
+                     color_discrete_sequence=['#00cc96'])
 
-    if len(plot_df) > 3:
+    if len(plot_df) > 5:
         try:
             slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
-            x_line = np.array([plot_df[x_axis].min(), plot_df[x_axis].max()])
-            y_line = slope * x_line + intercept
-            fig.add_trace(go.Scatter(x=x_line, y=y_line, mode='lines',
-                                   line=dict(color='red', dash='dash'),
-                                   name=f'R² = {r**2:.3f}'))
+            line_x = [plot_df[x_axis].min(), plot_df[x_axis].max()]
+            line_y = [slope * x + intercept for x in line_x]
+            fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
+                                     line=dict(color='red', dash='dash'),
+                                     name=f'R² = {r**2:.3f}'))
         except:
             pass
 
-    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="plot")
+    # کلیک پایدار و بدون پرش
+    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="main_plot")
 
-    if clicked and clicked["selection"]["points"]:
-        mat_name = clicked["selection"]["points"][0]["customdata"][0]
-        st.session_state.selected_material = mat_name
-    elif "selected_material" in st.session_state:
-        st.session_state.pop("selected_material", None)
-        st.rerun()
+    if clicked and clicked.get("selection", {}).get("points"):
+        selected_point = clicked["selection"]["points"][0]
+        material_name = selected_point["customdata"][0]
+        st.session_state.selected_material = material_name
+        # بدون rerun اضافی — فقط نمایش بده
+    # اگر کلیک خارج از نقطه بود، انتخاب پاک نشه مگر دکمه بزنن
 
-# Footer
-st.markdown("---")
-st.caption("Professional Materials Explorer — Fixed: No duplicates • Safe formatting • Negative Poisson fully supported")
+st.caption("Professional MAX Phase Explorer — Full Cij/Sij • Anisotropic • Stability Indicator • Stable Selection")
