@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from scipy.stats import linregress
 import numpy as np
 
-# ====================== DATA LOADING ======================
+# ====================== بارگذاری داده ======================
 @st.cache_data
 def load_data():
     df_atomic = pd.read_csv("ptable2.csv")
@@ -17,21 +17,24 @@ def load_data():
         raw = json.load(f)
 
     records = []
-
     for material, data in raw.items():
         if not data:
             continue
         row = {"material": material}
 
-        # Cij, Sij, Anisotropic, Average, Additional
+        # Cij
         if "Elastic_Tensor_Voigt" in data:
             for k, v in data["Elastic_Tensor_Voigt"].items():
                 try: row[k] = float(v)
                 except: pass
+
+        # Sij
         if "Compliance_Tensor" in data:
             for k, v in data["Compliance_Tensor"].items():
                 try: row[f"S_{k}"] = float(v)
                 except: pass
+
+        # Anisotropic Min/Max/Anisotropy
         if "Anisotropic_Mechanical_Properties" in data:
             for prop, vals in data["Anisotropic_Mechanical_Properties"].items():
                 clean = prop.replace("’", "").replace("'", "").replace(" ", "_").replace("_(GPa)", "")
@@ -40,12 +43,16 @@ def load_data():
                         if stat in vals:
                             try: row[f"{clean}_{stat}"] = float(vals[stat])
                             except: pass
+
+        # Average (Hill)
         if "Average_Mechanical_Properties" in data:
             for prop, vals in data["Average_Mechanical_Properties"].items():
                 clean = prop.replace("’", "").replace("'", "").replace(" ", "_").replace("_(GPa)", "")
                 if isinstance(vals, dict) and "Hill" in vals:
                     try: row[f"{clean}_Hill"] = float(vals["Hill"])
                     except: pass
+
+        # Additional Properties
         if "Additional_Properties" in data:
             for k, v in data["Additional_Properties"].items():
                 if k in ["Mechanical_Stability", "Brittleness_Indicator"]:
@@ -93,7 +100,6 @@ def load_data():
     atomic_df = pd.DataFrame(atomic_rows)
     df = pd.merge(atomic_df, mech_df, on='material', how='inner')
 
-    # همه ویژگی‌های عددی
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     all_features = sorted([c for c in numeric_cols if c != "material"])
 
@@ -104,27 +110,25 @@ if df.empty:
     st.error("داده‌ای بارگذاری نشد!")
     st.stop()
 
-# ====================== صفحه اصلی ======================
-st.set_page_config(page_title="MAX Phase Explorer", layout="wide")
+# ====================== تنظیمات صفحه ======================
+st.set_page_config(page_title="MAX Phase Explorer Pro", layout="wide")
 st.title("MAX Phase & Elastic Properties Explorer Pro")
 st.markdown("**رنگ نقاط: سبز = پایدار | قرمز = ناپایدار**")
 
-# ====================== استایل نئون آبی کم‌رنگ برای اسلایدرها ======================
+# ====================== استایل اسلایدر نئون آبی کم‌رنگ ======================
 st.markdown("""
 <style>
-    /* خط اسلایدر آبی نئونی کم‌رنگ و شفاف */
     .stSlider > div > div > div > div {
-        background: linear-gradient(to right, #00ccff22, #00f2ff44) !important;
+        background: linear-gradient(to right, #00ccff11, #00f2ff33) !important;
         height: 6px !important;
         border-radius: 5px;
     }
-    /* دستگیره اسلایدر با گلو ملایم */
     .stSlider > div > div > div[role="slider"] {
         background: #00ccff !important;
-        border: 2px solid #00f2ff !important;
-        box-shadow: 0 0 12px #00f2ff !important;
-        width: 20px !important;
-        height: 20px !important;
+        border: 1.5px solid #00f2ff !important;
+        box-shadow: 0 0 8px #00f2ff !important;
+        width: 18px !important;
+        height: 18px !important;
     }
     .stSlider label {
         color: #e0f8ff !important;
@@ -133,7 +137,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ====================== سایدبار ======================
+# ====================== سایدبار — نمایش همه خواص ======================
 with st.sidebar:
     st.header("جزئیات ماده")
 
@@ -141,7 +145,7 @@ with st.sidebar:
         mat = st.session_state.selected_material
         row = df[df['material'] == mat].iloc[0]
 
-        # وضعیت پایداری و شکنندگی با رنگ
+        # وضعیت پایداری
         stability = row.get("Mechanical_Stability", "Unknown")
         if stability == "Stable":
             st.success("Mechanically Stable")
@@ -149,7 +153,7 @@ with st.sidebar:
             st.error("Mechanically Unstable")
 
         brittleness = row.get("Brittleness_Indicator", "Unknown")
-        if brittleness == "Brittleness_Indicator":
+        if brittleness == "Brittle":
             st.warning("Brittle")
         elif brittleness == "Ductile":
             st.info("Ductile")
@@ -161,16 +165,16 @@ with st.sidebar:
             if col == "material": continue
             v = details.get(col)
             if pd.isna(v): continue
-            if isinstance(v, (int, float, np.number):
-                st.write(f"**{col.replace('_', ' '}: {v:.4f}")
+            if isinstance(v, (int, float, np.number)):  # ← درست شد
+                st.write(f"**{col.replace('_', ' ')}**: {v:.4f}")
             else:
-                st.write(f"**{col}: {v}")
+                st.write(f"**{col.replace('_', ' ')}**: {v}")
 
         if st.button("پاک کردن انتخاب"):
             st.session_state.selected_material = None
             st.rerun()
     else:
-        st.info("برای دیدن همه خواص روی یک نقطه کلیک کنید")
+        st.info("روی یک نقطه کلیک کنید تا همه خواص نمایش داده شود")
 
 # ====================== انتخاب محورها ======================
 col1, col2 = st.columns(2)
@@ -180,29 +184,28 @@ with col1:
 with col2:
     y_axis = st.selectbox("Y-axis → هر ویژگی اتمی یا الاستیک", all_features, index=0)
 
-# ====================== اسلایدرهای رنج با نئون آبی ======================
+# ====================== اسلایدرهای رنج (نئون آبی) ======================
 col_a, col_b = st.columns(2)
 with col_a:
     x_min, x_max = st.slider(
-        f"رنج X ({x_axis.replace('_', ' ')}",
-        min_value=float(df[x_axis].min(),
-        max_value=float(df[x_axis].max(),
-        value=(float(df[x_axis].min(), float(df[x_axis].max()),
-        step=(df[x_axis].max() / 100,
-        key="x_slider"
+        f"رنج X ({x_axis.replace('_', ' ')})",
+        min_value=float(df[x_axis].min()),
+        max_value=float(df[x_axis].max()),
+        value=(float(df[x_axis].min()), float(df[x_axis].max())),
+        step=(df[x_axis].max() - df[x_axis].min()) / 200,
+        key="x_range"
     )
-
 with col_b:
-    y_min, y_min, y_max = st.slider(
-        f"رنج Y ({y_axis.replace('_', ')}",
-        min_value=float(df[y_axis].min(),
-        max_value=float(df[y_axis].max(),
-        value=(float(df[y_axis].min(), float(df[y_axis].max()),
-        step=(df[y_axis].max() / 100,
-        key="y_slider"
+    y_min, y_max = st.slider(
+        f"رنج Y ({y_axis.replace('_', ' ')})",
+        min_value=float(df[y_axis].min()),
+        max_value=float(df[y_axis].max()),
+        value=(float(df[y_axis].min()), float(df[y_axis].max())),
+        step=(df[y_axis].max() - df[y_axis].min()) / 200,
+        key="y_range"
     )
 
-# ====================== فیلتر داده بر اساس رنج ===
+# ====================== فیلتر داده ======================
 filtered_df = df[
     (df[x_axis] >= x_min) & (df[x_axis] <= x_max) &
     (df[y_axis] >= y_min) & (df[y_axis] <= y_max)
@@ -215,8 +218,8 @@ if filtered_df.empty:
 else:
     # رنگ بر اساس پایداری
     filtered_df['color'] = filtered_df['Mechanical_Stability'].map({
-        "Stable": "#00cc96",  # سبز نئونی
-        "Unstable": "#ff4444"  # قرمز
+        "Stable": "#00cc96",
+        "Unstable": "#ff4444"
     }).fillna("#888888")
 
     fig = px.scatter(
@@ -224,33 +227,28 @@ else:
         color='color',
         color_discrete_map="identity",
         hover_data=['material'],
-        custom_data=['material'],
-        labels={x_axis: x_axis.replace('_', ' '), y_axis: y_axis.replace('_', ' ')},
-        color_disrete_map="identity"
+        custom_data=['material']
     )
 
-    # خط رگرسیون فقط روی داده‌های فیلتر شده
+    # خط رگرسیون
     try:
-        slope, intercept, r, _, _ = linregress(filtered_df[x_axis], filtered['y_axis'])
+        slope, intercept, r, _, _ = linregress(filtered_df[x_axis], filtered_df[y_axis])
         line_x = [x_min, x_max]
-        line_y = [slope * x + intercept + intercept for x in line_x]
+        line_y = [slope * x + intercept for x in line_x]
         fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
-                         line=dict(color='red', dash='dash', width=3),
-                         name=f'R² = {r**2:.3f}'))
+                                 line=dict(color='red', dash='dash', width=3),
+                                 name=f'R² = {r**2:.3f}'))
     except:
         pass
 
-    pass
+    # کلیک روی نقطه
+    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="plot")
 
-    # کلیک پایدار
-    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="main_plot")
-
-    if clicked and clicked["selection"]["points"]:
+    if clicked and clicked.get("selection", {}).get("points"):
         point = clicked["selection"]["points"][0]
-        mat_name = point["customdata"][0]["customdata"][0]
+        mat_name = point["customdata"][0]
         st.session_state.selected_material = mat_name
 
 # ====================== فوتر ======================
 st.markdown("---")
-st.caption("MAX Phase Explorer Pro — اسلایدر نئونی آبی کم‌رنگ • رنگ بر اساس پایداری • نمایش همه خواص • 2025")
-
+st.caption("MAX Phase Explorer Pro — اسلایدر نئونی آبی کم‌رنگ • رنگ بر اساس پایداری • نمایش کامل خواص • بدون باگ")
