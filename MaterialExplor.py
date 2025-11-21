@@ -1,243 +1,363 @@
-import streamlit as st
 import pandas as pd
 import json
 import re
 import plotly.express as px
 import plotly.graph_objects as go
 from scipy.stats import linregress
+import dash
+from dash import dcc, html, Input, Output, State, callback_context
+import dash_bootstrap_components as dbc
 import numpy as np
+import os
+import sys
 
-@st.cache_data
+# --- Helper Function for .exe file paths ---
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # _MEIPASS not set, so running in normal Python environment
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# --- 1. Data Loading and Processing ---
 def load_data():
-    df_atomic = pd.read_csv("ptable2.csv")
-    df_atomic['symbol'] = df_atomic['symbol'].str.strip()
+    try:
+        # --- Load Atomic Features ---
+        ptable_path = resource_path("ptable2.csv")
+        ptable_df = pd.read_csv(ptable_path)
+        ptable_df.rename(columns={"symbol": "element"}, inplace=True)
+        ptable_df['element'] = ptable_df['element'].str.strip()
 
-    with open("vaspkit_output.json", "r", encoding="utf-8") as f:
-        raw = json.load(f)
+        # --- Load and Parse VASPkit Mechanical Data ---
+        json_path = resource_path("vaspkit_output.json")
+        with open(json_path, "r", encoding="utf-8") as f:
+            mech_data_nested = json.load(f)
 
-    records = []
+        mechanical_properties_list = []
+        
+        anisotropic_keys = [
+            "Linear_compressibility",
+            "Poisson's_Ratio_v",
+            "Shear_Modulus_G_(GPa)",
+            "Young's_Modulus_E_(GPa)",
+            "Bulk_Modulus_B_(GPa)"
+        ]
+        
+        additional_keys = [
+            "Pughs_Ratio_B_div_G", "Cauchy_Pressure_Pc_GPa", "Kleinmans_Parameter",
+            "Universal_Elastic_Anisotropy", "Chung_Buessem_Anisotropy",
+            "Isotropic_Poissons_Ratio", "Wave_Velocity_Longitudinal",
+            "Wave_Velocity_Transverse", "Wave_Velocity_Average", "Debye_Temperature_K",
+            "Brittleness_Indicator", "Mechanical_Stability"
+        ]
 
-    for material, data in raw.items():
-        if not data:
-            continue
+        for material, data in mech_data_nested.items():
+            if not data:
+                continue
+            props = {"material": material}
 
-        row = {"material": material}
+            if "Anisotropic_Mechanical_Properties" in data:
+                for key in anisotropic_keys:
+                    clean_key = key.lstrip('|__')
+                    found_key = None
+                    if key in data["Anisotropic_Mechanical_Properties"]:
+                        found_key = key
+                    elif clean_key in data["Anisotropic_Mechanical_Properties"]:
+                        found_key = clean_key
+                    
+                    if found_key and isinstance(data["Anisotropic_Mechanical_Properties"].get(found_key), dict):
+                        for stat in ["Min", "Max", "Anisotropy"]:
+                            props[f"{clean_key}_{stat}"] = data["Anisotropic_Mechanical_Properties"][found_key].get(stat)
 
-        # --- Cij و Sij ---
-        if "Elastic_Tensor_Voigt" in data:
-            for k, v in data["Elastic_Tensor_Voigt"].items():
-                try:
-                    row[k] = float(v)
-                except:
-                    row[k] = None
-        if "Compliance_Tensor" in data:
-            for k, v in data["Compliance_Tensor"].items():
-                try:
-                    row[f"S_{k}"] = float(v)
-                except:
-                    row[f"S_{k}"] = None
+            if "Additional_Properties" in data:
+                for key in additional_keys:
+                    props[key] = data["Additional_Properties"].get(key)
+            
+            mechanical_properties_list.append(props)
 
-        # --- آنیزوتروپیک ---
-        if "Anisotropic_Mechanical_Properties" in data:
-            for prop, vals in data["Anisotropic_Mechanical_Properties"].items():
-                clean = prop.replace("’", "").replace("'", "").replace(" ", "_").replace("_(GPa)", "")
-                if isinstance(vals, dict):
-                    for stat in ["Min", "Max", "Anisotropy"]:
-                        if stat in vals:
-                            try:
-                                row[f"{clean}_{stat}"] = float(vals[stat])
-                            except:
-                                pass
+        mech_df = pd.DataFrame(mechanical_properties_list)
+        if mech_df.empty:
+            return pd.DataFrame(), [], []
 
-        # --- میانگین (Hill) ---
-        if "Average_Mechanical_Properties" in data:
-            for prop, vals in data["Average_Mechanical_Properties"].items():
-                clean = prop.replace("’", "").replace("'", "").replace(" ", "_").replace("_(GPa)", "")
-                if isinstance(vals, dict) and "Hill" in vals:
-                    try:
-                        row[f"{clean}_Hill"] = float(vals["Hill"])
-                    except:
-                        pass
+    except FileNotFoundError as e:
+        print(f"Error: Required file not found. {e}")
+        return pd.DataFrame(), [], []
+    except Exception as e:
+        print(f"An error occurred during data loading: {e}")
+        return pd.DataFrame(), [], []
 
-        # --- خواص اضافی ---
-        if "Additional_Properties" in data:
-            for k, v in data["Additional_Properties"].items():
-                if k in ["Mechanical_Stability", "Brittleness_Indicator"]:
-                    row[k] = v
-                else:
-                    try:
-                        row[k] = float(v)
-                    except:
-                        row[k] = v
+    def extract_elements(formula):
+        return re.findall(r'[A-Z][a-z]?', formula)
 
-        records.append(row)
-
-    mech_df = pd.DataFrame(records)
-
-    # --- میانگین وزنی اتمی ---
-    def parse_formula(f):
-        matches = re.findall(r'([A-Z][a-z]?)(\d*)', f)
-        return [(e, int(c) if c else 1) for e, c in matches]
-
-    feature_cols = [c for c in df_atomic.columns if c != 'symbol']
-    atomic_rows = []
+    feature_cols = [c for c in ptable_df.columns if c not in ['element']]
+    materials_data = []
 
     for _, row in mech_df.iterrows():
         material = row['material']
-        try:
-            elements = parse_formula(material)
-        except:
+        elements = extract_elements(material)
+        sub_df = ptable_df[ptable_df['element'].isin(elements)]
+        
+        if len(sub_df) == 0 or len(sub_df) != len(elements):
             continue
+            
+        averaged = sub_df[feature_cols].mean(numeric_only=True)
+        averaged['material'] = material
+        materials_data.append(averaged)
 
-        weighted = {col: 0.0 for col in feature_cols}
-        total = 0
-        for elem, count in elements:
-            erow = df_atomic[df_atomic['symbol'] == elem]
-            if erow.empty: break
-            vals = erow.iloc[0]
-            for col in feature_cols:
-                val = pd.to_numeric(vals[col], errors='coerce')
-                if not pd.isna(val):
-                    weighted[col] += val * count
-            total += count
-        else:
-            if total > 0:
-                avg = {col: weighted[col] / total for col in feature_cols}
-                avg['material'] = material
-                atomic_rows.append(avg)
+    features_avg_df = pd.DataFrame(materials_data)
+    if features_avg_df.empty:
+        return pd.DataFrame(), [], []
 
-    atomic_df = pd.DataFrame(atomic_rows)
-    df = pd.merge(atomic_df, mech_df, on='material', how='inner')
+    merged_df = pd.merge(features_avg_df, mech_df, on='material', how='inner')
+    
+    atomic_features = sorted([c for c in features_avg_df.columns if c not in ['material']])
+    mechanical_properties = sorted([c for c in mech_df.columns if c not in ['material', 'Brittleness_Indicator', 'Mechanical_Stability']])
+    
+    return merged_df, atomic_features, mechanical_properties
 
-    # همه ستون‌های عددی
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    all_features = [c for c in df.columns if c in numeric_cols or c in ["Mechanical_Stability", "Brittleness_Indicator"]]
+global_df, atomic_features, mechanical_properties = load_data()
 
-    return df, sorted(all_features)
+# --- 2. Initialize Dash App ---
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+server = app.server
+app.title = "Materials Property Explorer"
 
-# === اجرا ===
-df, all_features = load_data()
-if df.empty:
-    st.error("No data loaded!")
-    st.stop()
+# --- 3. App Layout ---
+app.layout = dbc.Container([
+    
+    html.H1("Interactive Materials Property Explorer", style={'textAlign': 'center', 'color': '#333', 'paddingTop': '20px'}),
+    html.Hr(),
 
-st.set_page_config(page_title="MAX Phase Explorer Pro", layout="wide")
-st.title("MAX Phase & Elastic Properties Explorer Pro")
+    # --- Main Controls ---
+    dbc.Card(
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col([
+                    html.Label("Select Atomic Feature (X-Axis):", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                    dcc.Dropdown(
+                        id='x-axis-dropdown',
+                        options=[{'label': f, 'value': f} for f in atomic_features],
+                        value=atomic_features[0] if atomic_features else None,
+                        clearable=False
+                    )
+                ], width=6),
 
+                dbc.Col([
+                    html.Label("Select Mechanical Property (Y-Axis):", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                    dcc.Dropdown(
+                        id='y-axis-dropdown',
+                        options=[{'label': p, 'value': p} for p in mechanical_properties],
+                        value=mechanical_properties[0] if mechanical_properties else None,
+                        clearable=False
+                    )
+                ], width=6),
+            ])
+        ]),
+        style={'marginBottom': '20px'}
+    ),
 
-# --- سایدبار: نمایش همه مشخصات ---
-with st.sidebar:
-    st.header("Material Details")
+    # --- Axis Range Controls ---
+    dbc.Card(
+        dbc.CardBody([
+            html.Label("Manual Axis Range Control (Optional)", style={'fontWeight': 'bold', 'color': '#555'}),
+            dbc.Row([
+                # X Axis Controls
+                dbc.Col([
+                    dbc.InputGroup([
+                        dbc.InputGroupText("X Min"),
+                        dbc.Input(id="x-min-input", type="number", placeholder="Auto"),
+                    ], size="sm"),
+                ], width=3),
+                dbc.Col([
+                    dbc.InputGroup([
+                        dbc.InputGroupText("X Max"),
+                        dbc.Input(id="x-max-input", type="number", placeholder="Auto"),
+                    ], size="sm"),
+                ], width=3),
 
-    if st.session_state.get("selected_material"):
-        mat = st.session_state.selected_material
-        row = df[df['material'] == mat].iloc[0]
+                # Y Axis Controls
+                dbc.Col([
+                    dbc.InputGroup([
+                        dbc.InputGroupText("Y Min"),
+                        dbc.Input(id="y-min-input", type="number", placeholder="Auto"),
+                    ], size="sm"),
+                ], width=3),
+                dbc.Col([
+                    dbc.InputGroup([
+                        dbc.InputGroupText("Y Max"),
+                        dbc.Input(id="y-max-input", type="number", placeholder="Auto"),
+                    ], size="sm"),
+                ], width=3),
+            ], className="g-2", style={'marginBottom': '10px'}),
+            
+            dbc.Row([
+                dbc.Col(
+                    dbc.Button("Reset Ranges", id="reset-ranges-btn", color="secondary", size="sm", outline=True, style={'width': '100%'}),
+                    width={"size": 2, "offset": 10}
+                )
+            ])
+        ]),
+        style={'marginBottom': '20px', 'backgroundColor': '#f0f0f0'}
+    ),
 
-        # وضعیت پایداری و شکنندگی
-        stability = row.get("Mechanical_Stability", "Unknown")
-        if stability == "Stable":
-            st.success("Mechanically Stable")
-        else:
-            st.error("Mechanically Unstable")
+    # --- Graph ---
+    dcc.Graph(id='scatter-plot', style={'height': '600px'}),
 
-        brittleness = row.get("Brittleness_Indicator", "Unknown")
-        if brittleness == "Brittle":
-            st.warning("Brittle Material")
-        elif brittleness == "Ductile":
-            st.info("Ductile Material")
+    # --- Modal ---
+    dbc.Modal(
+        [
+            dbc.ModalHeader(dbc.ModalTitle("Material Details"), close_button=True),
+            dbc.ModalBody(
+                dcc.Loading(
+                    type="default",
+                    children=[html.Div(id='modal-content')]
+                )
+            ),
+        ],
+        id="material-modal",
+        is_open=False,
+        size="lg",
+        centered=True,
+    ),
+], fluid=True, style={'backgroundColor': '#f9f9f9', 'minHeight': '100vh'})
 
-        st.markdown(f"### **{mat}**")
+# --- 4. Callbacks ---
 
-        # نمایش همه مشخصات — مرتب و کامل
-        details = row.drop("material")
+@app.callback(
+    [Output("x-min-input", "value"),
+     Output("x-max-input", "value"),
+     Output("y-min-input", "value"),
+     Output("y-max-input", "value")],
+    [Input("reset-ranges-btn", "n_clicks"),
+     Input('x-axis-dropdown', 'value'),
+     Input('y-axis-dropdown', 'value')]
+)
+def reset_inputs(n_clicks, x_change, y_change):
+    return None, None, None, None
 
-        # 1. ویژگی‌های اتمی
-        atomic_keys = [c for c in details.index if c in ["atomic_number", "density", "melting_point", "atomic_radius", "electronegativity"]]
-        if atomic_keys:
-            st.subheader("Atomic Properties")
-            for k in sorted(atomic_keys):
-                if pd.notna(details[k]):
-                    st.write(f"**{k.replace('_', ' ')}**: {float(details[k]):.4f}")
+@app.callback(
+    Output('scatter-plot', 'figure'),
+    [Input('x-axis-dropdown', 'value'),
+     Input('y-axis-dropdown', 'value'),
+     Input('x-min-input', 'value'),
+     Input('x-max-input', 'value'),
+     Input('y-min-input', 'value'),
+     Input('y-max-input', 'value')]
+)
+def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
+    if not x_axis_name or not y_axis_name or global_df.empty:
+        return go.Figure()
 
-        # 2. ضرایب الاستیک Cij
-        cij_keys = [c for c in details.index if c.startswith("C") and not c.endswith(("Min", "Max", "Anisotropy", "Hill"))]
-        if cij_keys:
-            st.subheader("Elastic Constants (GPa)")
-            for k in sorted(cij_keys):
-                if pd.notna(details[k]):
-                    st.write(f"**{k}**: {float(details[k]):.3f}")
+    # Include Mechanical_Stability in the DataFrame
+    plot_df = global_df[['material', x_axis_name, y_axis_name, 'Mechanical_Stability']].copy()
+    plot_df[x_axis_name] = pd.to_numeric(plot_df[x_axis_name], errors='coerce')
+    plot_df[y_axis_name] = pd.to_numeric(plot_df[y_axis_name], errors='coerce')
+    plot_df = plot_df.dropna(subset=[x_axis_name, y_axis_name])
 
-        # 3. Compliance Tensor
-        sij_keys = [c for c in details.index if c.startswith("S_")]
-        if sij_keys:
-            st.subheader("Compliance Tensor (GPa⁻¹)")
-            for k in sorted(sij_keys):
-                if pd.notna(details[k]):
-                    st.write(f"**{k.replace('S_', '')}**: {float(details[k]):.6f}")
+    if plot_df.empty:
+        return go.Figure().update_layout(title_text=f"No valid data for {x_axis_name} vs {y_axis_name}")
 
-        # 4. آنیزوتروپیک
-        aniso_keys = [c for c in details.index if any(x in c for x in ["_Min", "_Max", "_Anisotropy"])]
-        if aniso_keys:
-            st.subheader("Anisotropic Properties")
-            for k in sorted(aniso_keys):
-                if pd.notna(details[k]):
-                    st.write(f"**{k.replace('_', ' ')}**: {float(details[k]):.4f}")
+    # Create scatter plot with color coding
+    fig = px.scatter(
+        plot_df,
+        x=x_axis_name,
+        y=y_axis_name,
+        color='Mechanical_Stability',
+        color_discrete_map={
+            'Stable': 'green',
+            'Unstable': 'red'
+        },
+        hover_data=['material'],
+        custom_data=['material']
+    )
 
-        # 5. میانگین (Hill)
-        hill_keys = [c for c in details.index if "_Hill" in c]
-        if hill_keys:
-            st.subheader("Average Properties (Hill Approximation)")
-            for k in sorted(hill_keys):
-                if pd.notna(details[k]):
-                    st.write(f"**{k.replace('_Hill', '').replace('_', ' ')}**: {float(details[k]):.4f}")
-
-        # 6. خواص اضافی
-        extra_keys = ["Pughs_Ratio_B_div_G", "Cauchy_Pressure_Pc_GPa", "Debye_Temperature_K", "Universal_Elastic_Anisotropy"]
-        if any(k in details.index for k in extra_keys):
-            st.subheader("Additional Properties")
-            for k in extra_keys:
-                if k in details and pd.notna(details[k]):
-                    st.write(f"**{k.replace('_', ' ')}**: {float(details[k]):.4f}")
-
-        if st.button("Clear Selection"):
-            st.session_state.selected_material = None
-            st.rerun()
-
-    else:
-        st.info("Click on a point to see **all properties**")
-
-# --- انتخاب محورها ---
-col1, col2 = st.columns(2)
-with col1:
-    x_axis = st.selectbox("X-axis → Any Property", options=all_features,
-                          index=all_features.index("atomic_number") if "atomic_number" in all_features else 0)
-with col2:
-    y_axis = st.selectbox("Y-axis → Any Property", options=all_features,
-                          index=all_features.index("C44") if "C44" in all_features else 0)
-
-# --- نمودار ---
-plot_df = df[['material', x_axis, y_axis]].dropna()
-
-if len(plot_df) < 2:
-    st.warning("Not enough data.")
-else:
-    fig = px.scatter(plot_df, x=x_axis, y=y_axis, hover_data=['material'], custom_data=['material'],
-                     color_discrete_sequence=['#00cc96'], opacity=0.85)
-
+    # Regression logic
     try:
-        slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
-        line_x = [plot_df[x_axis].min(), plot_df[x_axis].max()]
-        line_y = [slope * x + intercept for x in line_x]
-        fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
-                                 line=dict(color='red', dash='dash'), name=f'R² = {r**2:.3f}'))
-    except:
-        pass
+        reg_x = plot_df[x_axis_name]
+        reg_y = plot_df[y_axis_name]
+        
+        if reg_x.nunique() > 1:
+            slope, intercept, r, p, stderr = linregress(reg_x, reg_y)
+            
+            line_x_range = np.array([reg_x.min(), reg_x.max()])
+            if x_min is not None: line_x_range[0] = min(line_x_range[0], x_min)
+            if x_max is not None: line_x_range[1] = max(line_x_range[1], x_max)
+            
+            line_y_vals = slope * line_x_range + intercept
+            
+            fig.add_trace(go.Scatter(
+                x=line_x_range, y=line_y_vals, mode='lines',
+                line=dict(color='blue', dash='dash'), # Changed to blue for contrast
+                name=f'Regression (R² = {r**2:.3f})'
+            ))
+    except Exception as e:
+        print(f"Could not compute regression: {e}")
 
-    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="plot")
+    fig.update_layout(
+        title=f'{y_axis_name} vs. {x_axis_name}',
+        xaxis_title=x_axis_name,
+        yaxis_title=y_axis_name,
+        hovermode="closest",
+        plot_bgcolor='white',
+        paper_bgcolor='#f9f9f9',
+        font_color='#333',
+        transition_duration=500
+    )
 
-    if clicked and clicked.get("selection", {}).get("points"):
-        mat_name = clicked["selection"]["points"][0]["customdata"][0]
-        st.session_state.selected_material = mat_name
+    if x_min is not None: fig.update_xaxes(range=[x_min, None if x_max is None else x_max])
+    if x_max is not None: fig.update_xaxes(range=[None if x_min is None else x_min, x_max])
+    if y_min is not None: fig.update_yaxes(range=[y_min, None if y_max is None else y_max])
+    if y_max is not None: fig.update_yaxes(range=[None if y_min is None else y_min, y_max])
+    
+    fig.update_xaxes(gridcolor='#eee', zerolinecolor='#ddd')
+    fig.update_yaxes(gridcolor='#eee', zerolinecolor='#ddd')
 
-st.caption("MAX Phase Explorer Pro — Full Details on Click • All Elastic & Atomic Properties in X/Y • Professional & Complete")
+    return fig
 
+@app.callback(
+    [Output('material-modal', 'is_open'),
+     Output('modal-content', 'children')],
+    [Input('scatter-plot', 'clickData')],
+    [State('material-modal', 'is_open')]
+)
+def toggle_material_modal(clickData, is_open):
+    if clickData:
+        material_name = clickData['points'][0]['customdata'][0]
+        material_data = global_df[global_df['material'] == material_name].iloc[0]
+        
+        table_header = [html.Thead(html.Tr([html.Th("Property"), html.Th("Value")]))]
+        table_body = []
+        
+        sorted_keys = sorted([key for key in material_data.keys() if key != 'material'])
+        
+        for key in sorted_keys:
+            value = material_data[key]
+            if isinstance(value, (int, float, np.number)):
+                if np.isnan(value):
+                    value_str = "N/A"
+                else:
+                    value_str = f"{value:.4f}"
+            else:
+                value_str = str(value)
+            table_body.append(html.Tr([html.Td(key, style={'fontWeight': 'bold'}), html.Td(value_str)]))
+
+        table = dbc.Table(table_header + [html.Tbody(table_body)], 
+                          bordered=True, striped=True, hover=True, 
+                          responsive=True, style={'marginTop': '15px'})
+        
+        content = [html.H3(material_name, style={'color': '#007bff'}), table]
+        return True, content
+
+    return is_open, dash.no_update
+
+if __name__ == '__main__':
+    if global_df.empty:
+        print("="*50)
+        print("Error: Data loading failed.")
+        print("="*50)
+    else:
+        print("Data loaded. Starting Dash server...")
+        app.run(debug=False, port=8050)
