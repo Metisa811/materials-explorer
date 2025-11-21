@@ -139,7 +139,7 @@ with st.sidebar:
 
     if st.session_state.get("selected_material"):
         mat = st.session_state.selected_material
-        row = df[df['material'] = mat].iloc[0]
+        row = df[df['material'] == mat].iloc[0]
 
         # وضعیت پایداری و شکنندگی با رنگ
         stability = row.get("Mechanical_Stability", "Unknown")
@@ -253,3 +253,4 @@ else:
 # ====================== فوتر ======================
 st.markdown("---")
 st.caption("MAX Phase Explorer Pro — اسلایدر نئونی آبی کم‌رنگ • رنگ بر اساس پایداری • نمایش همه خواص • 2025")
+
