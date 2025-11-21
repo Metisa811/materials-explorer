@@ -113,6 +113,10 @@ def load_data():
 
     merged_df = pd.merge(features_avg_df, mech_df, on='material', how='inner')
     
+    # Clean up stability column for consistent coloring
+    if 'Mechanical_Stability' in merged_df.columns:
+        merged_df['Mechanical_Stability'] = merged_df['Mechanical_Stability'].str.strip()
+
     atomic_features = sorted([c for c in features_avg_df.columns if c not in ['material']])
     mechanical_properties = sorted([c for c in mech_df.columns if c not in ['material', 'Brittleness_Indicator', 'Mechanical_Stability']])
     
@@ -123,12 +127,12 @@ global_df, atomic_features, mechanical_properties = load_data()
 # --- 2. Initialize Dash App ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 server = app.server
-app.title = "Materials Property Explorer"
+app.title = "Materials Property Explorer v2.0"
 
 # --- 3. App Layout ---
 app.layout = dbc.Container([
     
-    html.H1("Interactive Materials Property Explorer", style={'textAlign': 'center', 'color': '#333', 'paddingTop': '20px'}),
+    html.H1("Interactive Materials Property Explorer v2.0", style={'textAlign': 'center', 'color': '#333', 'paddingTop': '20px'}),
     html.Hr(),
 
     # --- Main Controls ---
@@ -204,7 +208,11 @@ app.layout = dbc.Container([
     ),
 
     # --- Graph ---
-    dcc.Graph(id='scatter-plot', style={'height': '600px'}),
+    dcc.Loading(
+        id="loading-1",
+        type="default",
+        children=dcc.Graph(id='scatter-plot', style={'height': '600px'})
+    ),
 
     # --- Modal ---
     dbc.Modal(
@@ -251,8 +259,16 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
     if not x_axis_name or not y_axis_name or global_df.empty:
         return go.Figure()
 
-    # Include Mechanical_Stability in the DataFrame
-    plot_df = global_df[['material', x_axis_name, y_axis_name, 'Mechanical_Stability']].copy()
+    # Ensure Mechanical_Stability exists, otherwise fill with 'Unknown'
+    cols_to_copy = ['material', x_axis_name, y_axis_name]
+    if 'Mechanical_Stability' in global_df.columns:
+        cols_to_copy.append('Mechanical_Stability')
+    
+    plot_df = global_df[cols_to_copy].copy()
+    
+    if 'Mechanical_Stability' not in plot_df.columns:
+        plot_df['Mechanical_Stability'] = 'Unknown'
+
     plot_df[x_axis_name] = pd.to_numeric(plot_df[x_axis_name], errors='coerce')
     plot_df[y_axis_name] = pd.to_numeric(plot_df[y_axis_name], errors='coerce')
     plot_df = plot_df.dropna(subset=[x_axis_name, y_axis_name])
@@ -260,7 +276,8 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
     if plot_df.empty:
         return go.Figure().update_layout(title_text=f"No valid data for {x_axis_name} vs {y_axis_name}")
 
-    # Create scatter plot with color coding
+    # Create scatter plot
+    # Logic: Map 'Stable' to Green, 'Unstable' to Red.
     fig = px.scatter(
         plot_df,
         x=x_axis_name,
@@ -268,7 +285,8 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
         color='Mechanical_Stability',
         color_discrete_map={
             'Stable': 'green',
-            'Unstable': 'red'
+            'Unstable': 'red',
+            'Unknown': 'gray'
         },
         hover_data=['material'],
         custom_data=['material']
@@ -282,15 +300,20 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
         if reg_x.nunique() > 1:
             slope, intercept, r, p, stderr = linregress(reg_x, reg_y)
             
-            line_x_range = np.array([reg_x.min(), reg_x.max()])
-            if x_min is not None: line_x_range[0] = min(line_x_range[0], x_min)
-            if x_max is not None: line_x_range[1] = max(line_x_range[1], x_max)
+            # Calculate line limits based on auto range OR manual range
+            x_start = reg_x.min()
+            x_end = reg_x.max()
             
+            # If manual ranges are wider, extend the line visual
+            if x_min is not None: x_start = min(x_start, x_min)
+            if x_max is not None: x_end = max(x_end, x_max)
+            
+            line_x_range = np.array([x_start, x_end])
             line_y_vals = slope * line_x_range + intercept
             
             fig.add_trace(go.Scatter(
                 x=line_x_range, y=line_y_vals, mode='lines',
-                line=dict(color='blue', dash='dash'), # Changed to blue for contrast
+                line=dict(color='blue', dash='dash', width=2), # Blue regression line
                 name=f'Regression (R² = {r**2:.3f})'
             ))
     except Exception as e:
@@ -342,7 +365,17 @@ def toggle_material_modal(clickData, is_open):
                     value_str = f"{value:.4f}"
             else:
                 value_str = str(value)
-            table_body.append(html.Tr([html.Td(key, style={'fontWeight': 'bold'}), html.Td(value_str)]))
+            
+            # Highlight Stability row
+            style = {'fontWeight': 'bold'}
+            row_style = {}
+            if key == 'Mechanical_Stability':
+                if str(value).strip() == 'Stable':
+                    row_style = {'backgroundColor': '#d4edda', 'color': '#155724'} # Light green
+                elif str(value).strip() == 'Unstable':
+                    row_style = {'backgroundColor': '#f8d7da', 'color': '#721c24'} # Light red
+
+            table_body.append(html.Tr([html.Td(key, style=style), html.Td(value_str)], style=row_style))
 
         table = dbc.Table(table_header + [html.Tbody(table_body)], 
                           bordered=True, striped=True, hover=True, 
@@ -360,4 +393,5 @@ if __name__ == '__main__':
         print("="*50)
     else:
         print("Data loaded. Starting Dash server...")
+        # IMPORTANT: debug=False ensures stability and removes signal errors
         app.run(debug=False, port=8050)
