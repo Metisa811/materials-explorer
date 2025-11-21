@@ -204,7 +204,7 @@ else:
         line_x = [x_min, x_max]
         line_y = [slope * x + intercept for x in line_x]
         fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
-                                 line=dict(color='red', dash='dash', width=3),
+                                 line=dict(color='yellow', dash='dash', width=3),
                                  name=f'R² = {r**2:.3f}'))
     except:
         pass
@@ -217,5 +217,6 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — Range Sliders • Color by Stability • Full Details on Click • Perfect!")
+
 
 
