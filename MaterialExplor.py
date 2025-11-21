@@ -122,6 +122,8 @@ global_df, atomic_features, mechanical_properties = load_data()
 
 # --- 2. Initialize Dash App ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# Expose the server variable for deployments
+server = app.server
 app.title = "Materials Property Explorer"
 
 # --- 3. App Layout ---
@@ -158,7 +160,7 @@ app.layout = dbc.Container([
         style={'marginBottom': '20px'}
     ),
 
-    # --- Axis Range Controls (New Feature) ---
+    # --- Axis Range Controls ---
     dbc.Card(
         dbc.CardBody([
             html.Label("Manual Axis Range Control (Optional)", style={'fontWeight': 'bold', 'color': '#555'}),
@@ -190,7 +192,7 @@ app.layout = dbc.Container([
                         dbc.Input(id="y-max-input", type="number", placeholder="Auto"),
                     ], size="sm"),
                 ], width=3),
-            ], className="g-2", style={'marginBottom': '10px'}), # g-2 for small gutters
+            ], className="g-2", style={'marginBottom': '10px'}),
             
             dbc.Row([
                 dbc.Col(
@@ -225,20 +227,18 @@ app.layout = dbc.Container([
 
 # --- 4. Callbacks ---
 
-# Callback to reset range inputs
 @app.callback(
     [Output("x-min-input", "value"),
      Output("x-max-input", "value"),
      Output("y-min-input", "value"),
      Output("y-max-input", "value")],
     [Input("reset-ranges-btn", "n_clicks"),
-     Input('x-axis-dropdown', 'value'), # Reset when axis changes
+     Input('x-axis-dropdown', 'value'),
      Input('y-axis-dropdown', 'value')]
 )
 def reset_inputs(n_clicks, x_change, y_change):
     return None, None, None, None
 
-# Callback to update graph
 @app.callback(
     Output('scatter-plot', 'figure'),
     [Input('x-axis-dropdown', 'value'),
@@ -260,8 +260,7 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
     if plot_df.empty:
         return go.Figure().update_layout(title_text=f"No valid data for {x_axis_name} vs {y_axis_name}")
 
-    # Filter data for regression if ranges are provided
-    # This ensures regression line is calculated only on visible data points (Optional: remove if you want regression on ALL data)
+    # Filter for regression if manual ranges are set
     regression_df = plot_df.copy()
     if x_min is not None: regression_df = regression_df[regression_df[x_axis_name] >= x_min]
     if x_max is not None: regression_df = regression_df[regression_df[x_axis_name] <= x_max]
@@ -276,22 +275,15 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
         custom_data=['material']
     )
 
-    # Add regression line (Based on filtered data or full data)
-    # Here I use the full dataset for regression so the line represents the true trend, 
-    # even if you zoom in. To change this to only visible data, calculate linregress on 'regression_df'.
-    r_val = None
+    # Regression logic
     try:
-        # Using full dataset for regression so zooming doesn't change the line equation
-        # If you prefer regression only on zoomed data, replace plot_df with regression_df below:
         reg_x = plot_df[x_axis_name]
         reg_y = plot_df[y_axis_name]
         
         if reg_x.nunique() > 1:
             slope, intercept, r, p, stderr = linregress(reg_x, reg_y)
             
-            # Calculate line coordinates across the full possible range
             line_x_range = np.array([reg_x.min(), reg_x.max()])
-            # If manual range is wider, extend the line
             if x_min is not None: line_x_range[0] = min(line_x_range[0], x_min)
             if x_max is not None: line_x_range[1] = max(line_x_range[1], x_max)
             
@@ -302,11 +294,9 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
                 line=dict(color='red', dash='dash'),
                 name=f'Regression (R² = {r**2:.3f})'
             ))
-            r_val = r
     except Exception as e:
         print(f"Could not compute regression: {e}")
 
-    # Update Axes Ranges if specified
     fig.update_layout(
         title=f'{y_axis_name} vs. {x_axis_name}',
         xaxis_title=x_axis_name,
@@ -318,7 +308,6 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
         transition_duration=500
     )
 
-    # Apply manual ranges if values exist
     if x_min is not None: fig.update_xaxes(range=[x_min, None if x_max is None else x_max])
     if x_max is not None: fig.update_xaxes(range=[None if x_min is None else x_min, x_max])
     if y_min is not None: fig.update_yaxes(range=[y_min, None if y_max is None else y_max])
@@ -372,4 +361,5 @@ if __name__ == '__main__':
         print("="*50)
     else:
         print("Data loaded. Starting Dash server...")
-        app.run(debug=True, port=8050)
+        # CRITICAL FIX: debug=False to prevent signal errors in restricted environments
+        app.run(debug=False, port=8050)
