@@ -107,7 +107,7 @@ if df.empty:
 
 st.set_page_config(page_title="MAX Phase Explorer Pro", layout="wide")
 st.title("MAX Phase & Elastic Properties Explorer Pro")
-st.markdown("**رنگ نقاط: سبز = پایدار | قرمز = ناپایدار**")
+st.markdown("**Dot color: Green = stable | Red = unstable**")
 
 # --- سایدبار کامل ---
 with st.sidebar:
@@ -151,7 +151,7 @@ with st.sidebar:
 # --- انتخاب محورها ---
 col1, col2 = st.columns(2)
 with col1:
-    x_axis = st.selectbox("X-axis dfhjhjhjhdj (Any Property)", all_features,
+    x_axis = st.selectbox("X-axis (Any Property)", all_features,
                           index=all_features.index("atomic_number") if "atomic_number" in all_features else 0)
 with col2:
     y_axis = st.selectbox("Y-axis (Any Property)", all_features, index=0)
@@ -217,4 +217,5 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — Range Sliders • Color by Stability • Full Details on Click • Perfect!")
+
 
