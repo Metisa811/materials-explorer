@@ -115,7 +115,7 @@ def load_data():
     
     # Clean up stability column for consistent coloring
     if 'Mechanical_Stability' in merged_df.columns:
-        merged_df['Mechanical_Stability'] = merged_df['Mechanical_Stability'].str.strip()
+        merged_df['Mechanical_Stability'] = merged_df['Mechanical_Stability'].astype(str).str.strip()
 
     atomic_features = sorted([c for c in features_avg_df.columns if c not in ['material']])
     mechanical_properties = sorted([c for c in mech_df.columns if c not in ['material', 'Brittleness_Indicator', 'Mechanical_Stability']])
@@ -259,15 +259,19 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
     if not x_axis_name or not y_axis_name or global_df.empty:
         return go.Figure()
 
-    # Ensure Mechanical_Stability exists, otherwise fill with 'Unknown'
+    # Prepare data
     cols_to_copy = ['material', x_axis_name, y_axis_name]
     if 'Mechanical_Stability' in global_df.columns:
         cols_to_copy.append('Mechanical_Stability')
     
     plot_df = global_df[cols_to_copy].copy()
     
+    # Ensure stability column exists
     if 'Mechanical_Stability' not in plot_df.columns:
         plot_df['Mechanical_Stability'] = 'Unknown'
+    else:
+        # Ensure values are stripped strings for exact matching
+        plot_df['Mechanical_Stability'] = plot_df['Mechanical_Stability'].astype(str).str.strip()
 
     plot_df[x_axis_name] = pd.to_numeric(plot_df[x_axis_name], errors='coerce')
     plot_df[y_axis_name] = pd.to_numeric(plot_df[y_axis_name], errors='coerce')
@@ -284,8 +288,8 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
         y=y_axis_name,
         color='Mechanical_Stability',
         color_discrete_map={
-            'Stable': 'green',
-            'Unstable': 'red',
+            'Stable': '#28a745',   # Green
+            'Unstable': '#dc3545', # Red
             'Unknown': 'gray'
         },
         hover_data=['material'],
@@ -300,11 +304,11 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
         if reg_x.nunique() > 1:
             slope, intercept, r, p, stderr = linregress(reg_x, reg_y)
             
-            # Calculate line limits based on auto range OR manual range
+            # Calculate line limits
             x_start = reg_x.min()
             x_end = reg_x.max()
             
-            # If manual ranges are wider, extend the line visual
+            # Extend line if manual ranges are wider
             if x_min is not None: x_start = min(x_start, x_min)
             if x_max is not None: x_end = max(x_end, x_max)
             
@@ -313,7 +317,7 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
             
             fig.add_trace(go.Scatter(
                 x=line_x_range, y=line_y_vals, mode='lines',
-                line=dict(color='blue', dash='dash', width=2), # Blue regression line
+                line=dict(color='#007bff', dash='dash', width=2), # Blue regression line
                 name=f'Regression (R² = {r**2:.3f})'
             ))
     except Exception as e:
@@ -330,6 +334,7 @@ def update_graph(x_axis_name, y_axis_name, x_min, x_max, y_min, y_max):
         transition_duration=500
     )
 
+    # Set manual ranges
     if x_min is not None: fig.update_xaxes(range=[x_min, None if x_max is None else x_max])
     if x_max is not None: fig.update_xaxes(range=[None if x_min is None else x_min, x_max])
     if y_min is not None: fig.update_yaxes(range=[y_min, None if y_max is None else y_max])
@@ -370,9 +375,10 @@ def toggle_material_modal(clickData, is_open):
             style = {'fontWeight': 'bold'}
             row_style = {}
             if key == 'Mechanical_Stability':
-                if str(value).strip() == 'Stable':
+                val_clean = str(value).strip()
+                if val_clean == 'Stable':
                     row_style = {'backgroundColor': '#d4edda', 'color': '#155724'} # Light green
-                elif str(value).strip() == 'Unstable':
+                elif val_clean == 'Unstable':
                     row_style = {'backgroundColor': '#f8d7da', 'color': '#721c24'} # Light red
 
             table_body.append(html.Tr([html.Td(key, style=style), html.Td(value_str)], style=row_style))
@@ -393,5 +399,5 @@ if __name__ == '__main__':
         print("="*50)
     else:
         print("Data loaded. Starting Dash server...")
-        # IMPORTANT: debug=False ensures stability and removes signal errors
+        # IMPORTANT: debug=False prevents signal errors in restricted environments
         app.run(debug=False, port=8050)
