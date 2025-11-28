@@ -7,10 +7,7 @@ import plotly.graph_objects as go
 from scipy.stats import linregress
 import numpy as np
 
-# این دقیقاً برای Streamlit Cloud کار می‌کنه
-from st_nglview import show_nglview
-
-# ====================== بارگذاری داده (همون قبلی) ======================
+# ====================== بارگذاری داده ======================
 @st.cache_data
 def load_data():
     df_atomic = pd.read_csv("ptable2.csv")
@@ -23,7 +20,6 @@ def load_data():
     for material, data in raw.items():
         if not data: continue
         row = {"material": material}
-        # (همون کد قبلی برای خواص الاستیک)
         if "Elastic_Tensor_Voigt" in data:
             for k, v in data["Elastic_Tensor_Voigt"].items():
                 try: row[k] = float(v)
@@ -34,7 +30,7 @@ def load_data():
                 except: pass
         if "Anisotropic_Mechanical_Properties" in data:
             for prop, vals in data["Anisotropic_Mechanical_Properties"].items():
-                clean = prop.replace("’", "").replace("'", "").replace(" ", "_")
+                clean = prop.replace("'", "").replace(" ", "_")
                 if isinstance(vals, dict):
                     for stat in ["Min", "Max", "Anisotropy"]:
                         if stat in vals:
@@ -42,7 +38,7 @@ def load_data():
                             except: pass
         if "Average_Mechanical_Properties" in data:
             for prop, vals in data["Average_Mechanical_Properties"].items():
-                clean = prop.replace("’", "").replace("'", "").replace(" ", "_")
+                clean = prop.replace("'", "").replace(" ", "_")
                 if isinstance(vals, dict) and "Hill" in vals:
                     try: row[f"{clean}_Hill"] = float(vals["Hill"])
                     except: pass
@@ -99,9 +95,24 @@ if df.empty:
 
 st.set_page_config(page_title="MAX Phase 3D Explorer", layout="wide")
 st.title("MAX Phase & Elastic Properties Explorer Pro")
-st.markdown("Green = Stable | Red = Unstable | Click → View 3D Structure")
+st.markdown("**Green = Stable | Red = Unstable | Click → View 3D Structure**")
 
-# ====================== سایدبار + 3D با st-nglview ======================
+# استایل اسلایدر نئونی
+st.markdown("""
+<style>
+    .stSlider > div > div > div > div {
+        background: linear-gradient(to right, #00ccff11, #00f2ff33) !important;
+        height: 6px !important;
+    }
+    .stSlider > div > div > div[role="slider"] {
+        background: #00ccff !important;
+        border: 1.5px solid #00f2ff !important;
+        box-shadow: 0 0 10px #00f2ff !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ====================== سایدبار ======================
 with st.sidebar:
     st.header("Material Details")
 
@@ -145,31 +156,92 @@ with st.sidebar:
     else:
         st.info("Click on a point to view details + 3D structure")
 
-# ====================== 3D VIEWER با st-nglview (تضمینی کار می‌کنه!) ======================
-if st.session_state.get("show_3d", False):
-    mat = st.session_state.get("selected_material")
-    if mat:
-        try:
-            with open("poscars.txt", "r", encoding="utf-8") as f:
-                content = f.read()
+# ====================== 3D VIEWER با HTML/3Dmol.js (بدون کتابخانه اضافی) ======================
+if st.session_state.get("show_3d", False) and st.session_state.get("selected_material"):
+    mat = st.session_state.selected_material
+    try:
+        with open("poscars.txt", "r", encoding="utf-8") as f:
+            content = f.read()
 
-            pattern = rf">>> {re.escape(mat)}\n(.*?)(?:\n>>> |\Z)"
-            match = re.search(pattern, content, re.DOTALL)
-            if match:
-                poscar_data = match.group(1).strip()
-                st.markdown(f"### 3D Structure — {mat}")
-                show_nglview(poscar_data, format="poscar", width=800, height=600)
-            else:
-                st.warning(f"Structure not found for {mat}")
-        except FileNotFoundError:
-            st.error("poscars.txt not found!")
-        except Exception as e:
-            st.error(f"Error: {e}")
+        # پیدا کردن POSCAR ماده
+        pattern = rf">>> {re.escape(mat)}\n(.*?)(?:\n>>> |\Z)"
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            poscar_data = match.group(1).strip()
+            st.markdown(f"### 3D Structure — {mat}")
 
-# بقیه کد (نمودار، اسلایدر، کلیک) همون قبلی بمونه...
+            # HTML با 3Dmol.js (بدون کتابخانه پایتون)
+            html_code = f"""
+            <div id="viewer3d" style="width: 800px; height: 600px;"></div>
+            <script src="https://3dmol.org/build/3Dmol-min.js"></script>
+            <script>
+                var viewer = $3Dmol.createViewer("viewer3d");
+                viewer.addModel(`{poscar_data}`, "poscar");
+                viewer.setStyle({{'stick': {{'radius': 0.15, 'color': 'spectrum'}}, 'sphere': {{'scale': 0.35}}});
+                viewer.setBackgroundColor(0x111111);
+                viewer.zoomTo();
+                viewer.spin(true);
+                viewer.render();
+            </script>
+            """
+            st.components.v1.html(html_code, height=650, scrolling=False)
+        else:
+            st.warning(f"Structure not found for {mat}")
+    except FileNotFoundError:
+        st.error("poscars.txt not found! Upload it.")
+    except Exception as e:
+        st.error(f"Error loading 3D: {e}")
 
-# فقط این دو خط رو اضافه کن:
-# requirements.txt → nglview و st-nglview
-# و این خط رو توی کد: from st_nglview import show_nglview
+# ====================== نمودار اصلی ======================
+col1, col2 = st.columns(2)
+with col1:
+    x_axis = st.selectbox("X-axis (Any Property)", all_features,
+                          index=all_features.index("atomic_number") if "atomic_number" in all_features else 0)
+with col2:
+    y_axis = st.selectbox("Y-axis (Any Property)", all_features, index=0)
 
-# تموم شد! حالا ۳ بعدی کاملاً کار می‌کنه روی Streamlit Cloud
+# اسلایدرهای رنج
+col_a, col_b = st.columns(2)
+with col_a:
+    x_min, x_max = st.slider(f"X Range ({x_axis.replace('_', ' ')})",
+                             min_value=float(df[x_axis].min()),
+                             max_value=float(df[x_axis].max()),
+                             value=(float(df[x_axis].min()), float(df[x_axis].max())))
+with col_b:
+    y_min, y_max = st.slider(f"Y Range ({y_axis.replace('_', ' ')})",
+                             min_value=float(df[y_axis].min()),
+                             max_value=float(df[y_axis].max()),
+                             value=(float(df[y_axis].min()), float(df[y_axis].max())))
+
+# فیلتر داده
+plot_df = df[(df[x_axis] >= x_min) & (df[x_axis] <= x_max) & (df[y_axis] >= y_min) & (df[y_axis] <= y_max)].copy()
+plot_df = plot_df[['material', x_axis, y_axis, 'Mechanical_Stability']].dropna()
+
+if plot_df.empty:
+    st.warning("No data in selected range.")
+else:
+    plot_df['color'] = plot_df['Mechanical_Stability'].map({
+        "Stable": "#00cc96", "Unstable": "#ff4444"
+    }).fillna("#888888")
+
+    fig = px.scatter(plot_df, x=x_axis, y=y_axis,
+                     color='color', color_discrete_map="identity",
+                     hover_data=['material'], custom_data=['material'])
+
+    try:
+        slope, intercept, r, _, _ = linregress(plot_df[x_axis], plot_df[y_axis])
+        line_x = [x_min, x_max]
+        line_y = [slope * x + intercept for x in line_x]
+        fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines',
+                                 line=dict(color='red', dash='dash', width=3),
+                                 name=f'R² = {r**2:.3f}'))
+    except: pass
+
+    clicked = st.plotly_chart(fig, on_select="rerun", use_container_width=True, key="plot")
+
+    if clicked and clicked.get("selection", {}).get("points"):
+        point = clicked["selection"]["points"][0]
+        mat_name = point["customdata"][0]
+        st.session_state.selected_material = mat_name
+
+st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
