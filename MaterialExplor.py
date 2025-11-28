@@ -161,63 +161,66 @@ with st.sidebar:
 # ====================== 3D VIEWER — کاملاً بدون خطا ======================
 # فقط این بخش رو جایگزین کن (از خط 3D Viewer شروع کن)
 # ====================== 3D VIEWER — کاملاً بدون خطا و کار می‌کنه ======================
+# ====================== 3D VIEWER — کاملاً بدون خطا و کار می‌کنه ======================
 if st.session_state.get("show_3d", False) and st.session_state.get("selected_material"):
     mat = st.session_state.selected_material
 
     # دکمه بستن
-    col_close, _ = st.columns([1, 10])
-    with col_close:
-        if st.button("Close 3D", type="secondary"):
-            st.session_state.show_3d = False
-            st.rerun()
+    if st.button("Close 3D Viewer", type="secondary"):
+        st.session_state.show_3d = False
+        st.rerun()
 
     try:
         with open("poscars.txt", "r", encoding="utf-8") as f:
             content = f.read()
 
-        # روش امن‌تر: اول خطی که با >>> شروع میشه رو پیدا کن، بعد همه چیز تا خط بعدی >>> رو بگیر
-        import re
+        # پیدا کردن بلوک ماده
         escaped_mat = re.escape(mat)
-        pattern = rf"^>>> {escaped_mat}\n(.*?)(?=^\>\>\> |\Z)"
+        pattern = rf"^>>> {escaped_mat}\n(.*?)(?=^>>> |\Z)"
         match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
 
         if match:
-            poscar_block = match.group(1).strip()
+            block = match.group(1).strip()
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
 
-            # تبدیل POSCAR به XYZ ساده (3Dmol.js بهتر می‌خونه)
-            lines = [line.strip() for line in poscar_block.splitlines() if line.strip()]
             if len(lines) < 9:
-                st.warning("POSCAR format invalid")
+                st.warning("POSCAR format too short")
             else:
                 try:
                     scale = float(lines[1])
+
+                    # بردارهای شبکه
                     lattice = []
                     for i in range(2, 5):
-                        lattice.append(list(map(float, lines[i].split()[:3])))
-                    
-                    elem_line = lines[5]
-                    count_line = lines[6]
-                    coord_type = lines[7].lower().startswith("d")  # Direct or Cartesian
-                    coord_start = 8
+                        vec = list(map(float, lines[i].split()[:3]))
+                        lattice.append(vec)
 
-                    elements = elem_line.split()
-                    counts = list(map(int, count_line.split()))
+                    # عناصر و تعداد
+                    elements = lines[5].split()
+                    counts = list(map(int, lines[6].split()))
+
+                    # نوع مختصات
+                    coord_type = lines[7].lower().startswith("d")  # Direct یا Cartesian
+
+                    # مختصات
                     coords = []
-                    for line in lines[coord_start:]:
+                    for line in lines[8:]:
                         if line.strip():
-                            coords.append(list(map(float(x) for x in line.split()[:3])))
+                            parts = line.split()
+                            if len(parts) >= 3:
+                                coords.append([float(parts[0]), float(parts[1]), float(parts[2])])
 
-                    # ساخت XYZ
-                    xyz_lines = [str(sum(counts)), f"{mat} - Generated from POSCAR"]
+                    # تبدیل به XYZ
+                    xyz_lines = [str(sum(counts)), mat]
                     idx = 0
                     for elem, cnt in zip(elements, counts):
                         for _ in range(cnt):
                             c = coords[idx]
-                            if coord_type == "direct":
+                            if coord_type:  # Direct
                                 x = c[0]*lattice[0][0] + c[1]*lattice[1][0] + c[2]*lattice[2][0]
                                 y = c[0]*lattice[0][1] + c[1]*lattice[1][1] + c[2]*lattice[2][1]
                                 z = c[0]*lattice[0][2] + c[1]*lattice[1][2] + c[2]*lattice[2][2]
-                            else:
+                            else:  # Cartesian
                                 x, y, z = c
                             xyz_lines.append(f"{elem} {x*scale:.6f} {y*scale:.6f} {z*scale:.6f}")
                             idx += 1
@@ -243,9 +246,9 @@ if st.session_state.get("show_3d", False) and st.session_state.get("selected_mat
                 except Exception as e:
                     st.error(f"POSCAR parsing error: {e}")
         else:
-            st.warning(f"No structure found for '{mat}' in poscars.txt")
+            st.warning(f"Structure not found for '{mat}'")
     except FileNotFoundError:
-        st.error("File 'poscars.txt' not found in project root!")
+        st.error("File `poscars.txt` not found!")
     except Exception as e:
         st.error(f"Error: {e}")
 # ====================== نمودار اصلی ======================
@@ -301,6 +304,7 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
+
 
 
 
