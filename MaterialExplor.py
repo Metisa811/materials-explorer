@@ -159,44 +159,74 @@ with st.sidebar:
 # ====================== 3D VIEWER با HTML/3Dmol.js (بدون کتابخانه اضافی) ======================
 # این بخش رو دقیقاً جایگزین کن (از خط 180 به بعد)
 # ====================== 3D VIEWER — کاملاً بدون خطا ======================
+# فقط این بخش رو جایگزین کن (از خط 3D Viewer شروع کن)
 if st.session_state.get("show_3d", False) and st.session_state.get("selected_material"):
     mat = st.session_state.selected_material
+
+    # دکمه بستن
+    col1, col2 = st.columns([1, 8])
+    with col1:
+        if st.button("Close 3D", type="secondary"):
+            st.session_state.show_3d = False
+            st.rerun()
+
     try:
         with open("poscars.txt", "r", encoding="utf-8") as f:
             content = f.read()
 
-        pattern = rf">>> {re.escape(mat)}\n(.*?)(?:\n>>> |\Z)"
+        pattern = rf">>> {re.escape(mat)}\n(.*?([0-9.]+\s*\n(?:[ -]?[0-9.]+\s+){2}[0-9.]+\s*\n.*?Direct(?:\s*\n[0-9.\s-]+)+)"
         match = re.search(pattern, content, re.DOTALL)
         if match:
-            poscar_data = match.group(1).strip()
-
-            # فرار از کاراکترهای خطرناک
-            poscar_data = poscar_data.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+            poscar_block = match.group(1).strip()
 
             st.markdown(f"### 3D Structure — {mat}")
 
-            # استفاده از """ و دو برابر کردن {{ }} برای جلوگیری از خطای f-string
+            # تبدیل POSCAR به فرمت قابل خواندن توسط 3Dmol.js
+            lines = poscar_block.splitlines()
+            scale = float(lines[1])
+            lattice = [list(map(float, lines[i].split()[:3])) for i in range(2, 5)]
+            elements = " ".join(lines[5].split())
+            counts = list(map(int, lines[6].split()))
+            coord_type = lines[7].strip().lower()
+            coords = [list(map(float, line.split()[:3])) for line in lines[8:] if line.strip()]
+
+            # ساخت محتوای XYZ
+            xyz_lines = [f"{len(coords)}", mat]
+            idx = 0
+            for elem, count in zip(elements.split(), counts):
+                for _ in range(count):
+                    c = coords[idx]
+                    if coord_type == "direct":
+                        # تبدیل به کارتزین
+                        x = c[0]*lattice[0][0] + c[1]*lattice[1][0] + c[2]*lattice[2][0]
+                        y = c[0]*lattice[0][1] + c[1]*lattice[1][1] + c[2]*lattice[2][1]
+                        z = c[0]*lattice[0][2] + c[1]*lattice[1][2] + c[2]*lattice[2][2]
+                    else:
+                        x, y, z = c
+                    xyz_lines.append(f"{elem} {x*scale:.6f} {y*scale:.6f} {z*scale:.6f}")
+                    idx += 1
+
+            xyz_content = "\n".join(xyz_lines)
+
             html_code = f"""
-            <div id="viewer3d" style="width: 100%; height: 600px; background: #000; border-radius: 12px; box-shadow: 0 0 30px #00ccff44;"></div>
+            <div id="viewer3d" style="width: 100%; height: 600px; background: #000; border-radius: 15px; box-shadow: 0 0 30px #00ccff55;"></div>
             <script src="https://3dmol.org/build/3Dmol-min.js"></script>
             <script>
-                var viewer = $3Dmol.createViewer("viewer3d");
-                viewer.addModel(`{poscar_data}`, "poscar");
-                viewer.setStyle({{stick: {{radius: 0.15, color: 'spectrum'}}, sphere: {{scale: 0.35}}}});
-                viewer.setBackgroundColor(0x000000);
+                let viewer = $3Dmol.createViewer("viewer3d", {{backgroundColor: "black"}});
+                viewer.addModel(`{xyz_content}`, "xyz");
+                viewer.setStyle({{stick: {{radius: 0.18, color: 'spectrum'}}, sphere: {{scale: 0.4, colorscheme: 'Jmol'}}}});
                 viewer.zoomTo();
                 viewer.spin(true);
                 viewer.render();
             </script>
             """
-
             st.components.v1.html(html_code, height=650, scrolling=False)
         else:
-            st.warning(f"No structure found for {mat}")
+            st.warning("Structure not found in poscars.txt")
     except FileNotFoundError:
-        st.error("File `poscars.txt` not found! Please upload it.")
+        st.error("poscars.txt not found!")
     except Exception as e:
-        st.error(f"3D Viewer Error: {e}")
+        st.error(f"Error: {e}")
 
 # ====================== نمودار اصلی ======================
 col1, col2 = st.columns(2)
@@ -251,6 +281,7 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
+
 
 
 
