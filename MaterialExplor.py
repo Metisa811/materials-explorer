@@ -183,7 +183,7 @@ if st.session_state.get("show_3d", False) and st.session_state.get("selected_mat
                 viewer.spin(true);
                 viewer.render();
             </script>
-            """
+                """
             st.components.v1.html(html_code, height=650, scrolling=False)
         else:
             st.warning(f"No structure found for {mat}")
@@ -245,4 +245,5 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
+
 
