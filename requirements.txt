@@ -3,8 +3,5 @@ pandas
 numpy
 plotly
 scipy
-stmol
-py3Dmol
-dash-bootstrap-components
-
-
+nglview
+st-nglview
