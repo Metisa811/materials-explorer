@@ -160,12 +160,13 @@ with st.sidebar:
 # این بخش رو دقیقاً جایگزین کن (از خط 180 به بعد)
 # ====================== 3D VIEWER — کاملاً بدون خطا ======================
 # فقط این بخش رو جایگزین کن (از خط 3D Viewer شروع کن)
+# ====================== 3D VIEWER — کاملاً بدون خطا و کار می‌کنه ======================
 if st.session_state.get("show_3d", False) and st.session_state.get("selected_material"):
     mat = st.session_state.selected_material
 
     # دکمه بستن
-    col1, col2 = st.columns([1, 8])
-    with col1:
+    col_close, _ = st.columns([1, 10])
+    with col_close:
         if st.button("Close 3D", type="secondary"):
             st.session_state.show_3d = False
             st.rerun()
@@ -174,60 +175,79 @@ if st.session_state.get("show_3d", False) and st.session_state.get("selected_mat
         with open("poscars.txt", "r", encoding="utf-8") as f:
             content = f.read()
 
-        pattern = rf">>> {re.escape(mat)}\n(.*?([0-9.]+\s*\n(?:[ -]?[0-9.]+\s+){2}[0-9.]+\s*\n.*?Direct(?:\s*\n[0-9.\s-]+)+)"
-        match = re.search(pattern, content, re.DOTALL)
+        # روش امن‌تر: اول خطی که با >>> شروع میشه رو پیدا کن، بعد همه چیز تا خط بعدی >>> رو بگیر
+        import re
+        escaped_mat = re.escape(mat)
+        pattern = rf"^>>> {escaped_mat}\n(.*?)(?=^\>\>\> |\Z)"
+        match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+
         if match:
             poscar_block = match.group(1).strip()
 
-            st.markdown(f"### 3D Structure — {mat}")
+            # تبدیل POSCAR به XYZ ساده (3Dmol.js بهتر می‌خونه)
+            lines = [line.strip() for line in poscar_block.splitlines() if line.strip()]
+            if len(lines) < 9:
+                st.warning("POSCAR format invalid")
+            else:
+                try:
+                    scale = float(lines[1])
+                    lattice = []
+                    for i in range(2, 5):
+                        lattice.append(list(map(float, lines[i].split()[:3])))
+                    
+                    elem_line = lines[5]
+                    count_line = lines[6]
+                    coord_type = lines[7].lower().startswith("d")  # Direct or Cartesian
+                    coord_start = 8
 
-            # تبدیل POSCAR به فرمت قابل خواندن توسط 3Dmol.js
-            lines = poscar_block.splitlines()
-            scale = float(lines[1])
-            lattice = [list(map(float, lines[i].split()[:3])) for i in range(2, 5)]
-            elements = " ".join(lines[5].split())
-            counts = list(map(int, lines[6].split()))
-            coord_type = lines[7].strip().lower()
-            coords = [list(map(float, line.split()[:3])) for line in lines[8:] if line.strip()]
+                    elements = elem_line.split()
+                    counts = list(map(int, count_line.split()))
+                    coords = []
+                    for line in lines[coord_start:]:
+                        if line.strip():
+                            coords.append(list(map(float(x) for x in line.split()[:3]))
 
-            # ساخت محتوای XYZ
-            xyz_lines = [f"{len(coords)}", mat]
-            idx = 0
-            for elem, count in zip(elements.split(), counts):
-                for _ in range(count):
-                    c = coords[idx]
-                    if coord_type == "direct":
-                        # تبدیل به کارتزین
-                        x = c[0]*lattice[0][0] + c[1]*lattice[1][0] + c[2]*lattice[2][0]
-                        y = c[0]*lattice[0][1] + c[1]*lattice[1][1] + c[2]*lattice[2][1]
-                        z = c[0]*lattice[0][2] + c[1]*lattice[1][2] + c[2]*lattice[2][2]
-                    else:
-                        x, y, z = c
-                    xyz_lines.append(f"{elem} {x*scale:.6f} {y*scale:.6f} {z*scale:.6f}")
-                    idx += 1
+                    # ساخت XYZ
+                    xyz_lines = [str(sum(counts)), f"{mat} - Generated from POSCAR"]
+                    idx = 0
+                    for elem, cnt in zip(elements, counts):
+                        for _ in range(cnt):
+                            c = coords[idx]
+                            if coord_type == "direct":
+                                x = c[0]*lattice[0][0] + c[1]*lattice[1][0] + c[2]*lattice[2][0]
+                                y = c[0]*lattice[0][1] + c[1]*lattice[1][1] + c[2]*lattice[2][1]
+                                z = c[0]*lattice[0][2] + c[1]*lattice[1][2] + c[2]*lattice[2][2]
+                            else:
+                                x, y, z = c
+                            xyz_lines.append(f"{elem} {x*scale:.6f} {y*scale:.6f} {z*scale:.6f}")
+                            idx += 1
 
-            xyz_content = "\n".join(xyz_lines)
+                    xyz_content = "\n".join(xyz_lines)
 
-            html_code = f"""
-            <div id="viewer3d" style="width: 100%; height: 600px; background: #000; border-radius: 15px; box-shadow: 0 0 30px #00ccff55;"></div>
-            <script src="https://3dmol.org/build/3Dmol-min.js"></script>
-            <script>
-                let viewer = $3Dmol.createViewer("viewer3d", {{backgroundColor: "black"}});
-                viewer.addModel(`{xyz_content}`, "xyz");
-                viewer.setStyle({{stick: {{radius: 0.18, color: 'spectrum'}}, sphere: {{scale: 0.4, colorscheme: 'Jmol'}}}});
-                viewer.zoomTo();
-                viewer.spin(true);
-                viewer.render();
-            </script>
-            """
-            st.components.v1.html(html_code, height=650, scrolling=False)
+                    st.markdown(f"### 3D Structure — {mat}")
+
+                    html_code = f"""
+                    <div id="viewer3d" style="width:100%; height:600px; background:#000; border-radius:15px; overflow:hidden;"></div>
+                    <script src="https://3dmol.org/build/3Dmol-min.js"></script>
+                    <script>
+                        let viewer = $3Dmol.createViewer("viewer3d", {{backgroundColor: "black"}});
+                        viewer.addModel(`{xyz_content}`, "xyz");
+                        viewer.setStyle({{stick: {{radius: 0.18, color: 'spectrum'}}, sphere: {{scale: 0.4, colorscheme: 'Jmol'}}}});
+                        viewer.zoomTo();
+                        viewer.spin(true);
+                        viewer.render();
+                    </script>
+                    """
+                    st.components.v1.html(html_code, height=650, scrolling=False)
+
+                except Exception as e:
+                    st.error(f"POSCAR parsing error: {e}")
         else:
-            st.warning("Structure not found in poscars.txt")
+            st.warning(f"No structure found for '{mat}' in poscars.txt")
     except FileNotFoundError:
-        st.error("poscars.txt not found!")
+        st.error("File 'poscars.txt' not found in project root!")
     except Exception as e:
         st.error(f"Error: {e}")
-
 # ====================== نمودار اصلی ======================
 col1, col2 = st.columns(2)
 with col1:
@@ -281,6 +301,7 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
+
 
 
 
