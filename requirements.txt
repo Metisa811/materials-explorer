@@ -3,4 +3,5 @@ plotly
 pandas
 scipy
 numpy
+py3Dmol
 dash-bootstrap-components
