@@ -3,5 +3,3 @@ pandas
 numpy
 plotly
 scipy
-nglview
-st-nglview
