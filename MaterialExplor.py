@@ -158,6 +158,7 @@ with st.sidebar:
 
 # ====================== 3D VIEWER با HTML/3Dmol.js (بدون کتابخانه اضافی) ======================
 # این بخش رو دقیقاً جایگزین کن (از خط 180 به بعد)
+# ====================== 3D VIEWER — کاملاً بدون خطا ======================
 if st.session_state.get("show_3d", False) and st.session_state.get("selected_material"):
     mat = st.session_state.selected_material
     try:
@@ -167,28 +168,33 @@ if st.session_state.get("show_3d", False) and st.session_state.get("selected_mat
         pattern = rf">>> {re.escape(mat)}\n(.*?)(?:\n>>> |\Z)"
         match = re.search(pattern, content, re.DOTALL)
         if match:
-            poscar_data = match.group(match.group(1).strip()).replace("`", "\\`").replace("$", "\\$")  # فرار از کاراکترهای جاوااسکریپت
+            poscar_data = match.group(1).strip()
+
+            # فرار از کاراکترهای خطرناک
+            poscar_data = poscar_data.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
 
             st.markdown(f"### 3D Structure — {mat}")
 
+            # استفاده از """ و دو برابر کردن {{ }} برای جلوگیری از خطای f-string
             html_code = f"""
-            <div id="viewer3d" style="width: 100%; height: 600px; background: #000; border-radius: 12px; box-shadow: 0 0 20px #00ccff33;"></div>
+            <div id="viewer3d" style="width: 100%; height: 600px; background: #000; border-radius: 12px; box-shadow: 0 0 30px #00ccff44;"></div>
             <script src="https://3dmol.org/build/3Dmol-min.js"></script>
             <script>
-                var viewer = $3Dmol.createViewer("viewer3d", {{backgroundColor: 'black'}});
+                var viewer = $3Dmol.createViewer("viewer3d");
                 viewer.addModel(`{poscar_data}`, "poscar");
-                viewer.setStyle({{stick: {{radius: 0.15, color: 'spectrum'}}, sphere: {{scale: 0.35}}});
+                viewer.setStyle({{stick: {{radius: 0.15, color: 'spectrum'}}, sphere: {{scale: 0.35}}}});
                 viewer.setBackgroundColor(0x000000);
                 viewer.zoomTo();
                 viewer.spin(true);
                 viewer.render();
             </script>
-                """
+            """
+
             st.components.v1.html(html_code, height=650, scrolling=False)
         else:
             st.warning(f"No structure found for {mat}")
     except FileNotFoundError:
-        st.error("poscars.txt file not found!")
+        st.error("File `poscars.txt` not found! Please upload it.")
     except Exception as e:
         st.error(f"3D Viewer Error: {e}")
 
@@ -245,5 +251,6 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
+
 
 
