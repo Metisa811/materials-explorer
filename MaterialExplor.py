@@ -157,28 +157,28 @@ with st.sidebar:
         st.info("Click on a point to view details + 3D structure")
 
 # ====================== 3D VIEWER با HTML/3Dmol.js (بدون کتابخانه اضافی) ======================
+# این بخش رو دقیقاً جایگزین کن (از خط 180 به بعد)
 if st.session_state.get("show_3d", False) and st.session_state.get("selected_material"):
     mat = st.session_state.selected_material
     try:
         with open("poscars.txt", "r", encoding="utf-8") as f:
             content = f.read()
 
-        # پیدا کردن POSCAR ماده
         pattern = rf">>> {re.escape(mat)}\n(.*?)(?:\n>>> |\Z)"
         match = re.search(pattern, content, re.DOTALL)
         if match:
-            poscar_data = match.group(1).strip()
+            poscar_data = match.group(match.group(1).strip()).replace("`", "\\`").replace("$", "\\$")  # فرار از کاراکترهای جاوااسکریپت
+
             st.markdown(f"### 3D Structure — {mat}")
 
-            # HTML با 3Dmol.js (بدون کتابخانه پایتون)
             html_code = f"""
-            <div id="viewer3d" style="width: 800px; height: 600px;"></div>
+            <div id="viewer3d" style="width: 100%; height: 600px; background: #000; border-radius: 12px; box-shadow: 0 0 20px #00ccff33;"></div>
             <script src="https://3dmol.org/build/3Dmol-min.js"></script>
             <script>
-                var viewer = $3Dmol.createViewer("viewer3d");
+                var viewer = $3Dmol.createViewer("viewer3d", {{backgroundColor: 'black'}});
                 viewer.addModel(`{poscar_data}`, "poscar");
-                viewer.setStyle({{'stick': {{'radius': 0.15, 'color': 'spectrum'}}, 'sphere': {{'scale': 0.35}}});
-                viewer.setBackgroundColor(0x111111);
+                viewer.setStyle({{stick: {{radius: 0.15, color: 'spectrum'}}, sphere: {{scale: 0.35}}});
+                viewer.setBackgroundColor(0x000000);
                 viewer.zoomTo();
                 viewer.spin(true);
                 viewer.render();
@@ -186,11 +186,11 @@ if st.session_state.get("show_3d", False) and st.session_state.get("selected_mat
             """
             st.components.v1.html(html_code, height=650, scrolling=False)
         else:
-            st.warning(f"Structure not found for {mat}")
+            st.warning(f"No structure found for {mat}")
     except FileNotFoundError:
-        st.error("poscars.txt not found! Upload it.")
+        st.error("poscars.txt file not found!")
     except Exception as e:
-        st.error(f"Error loading 3D: {e}")
+        st.error(f"3D Viewer Error: {e}")
 
 # ====================== نمودار اصلی ======================
 col1, col2 = st.columns(2)
@@ -245,3 +245,4 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
+
