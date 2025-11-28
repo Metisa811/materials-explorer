@@ -205,7 +205,7 @@ if st.session_state.get("show_3d", False) and st.session_state.get("selected_mat
                     coords = []
                     for line in lines[coord_start:]:
                         if line.strip():
-                            coords.append(list(map(float(x) for x in line.split()[:3]))
+                            coords.append(list(map(float(x) for x in line.split()[:3])))
 
                     # ساخت XYZ
                     xyz_lines = [str(sum(counts)), f"{mat} - Generated from POSCAR"]
@@ -301,6 +301,7 @@ else:
         st.session_state.selected_material = mat_name
 
 st.caption("MAX Phase Explorer Pro — 3D Viewer with HTML/3Dmol.js • Neon Sliders • Full English • No Dependencies • 2025")
+
 
 
 
