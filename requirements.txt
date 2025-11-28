@@ -4,4 +4,7 @@ pandas
 scipy
 numpy
 py3Dmol
+streamlit
+stmole
 dash-bootstrap-components
+
